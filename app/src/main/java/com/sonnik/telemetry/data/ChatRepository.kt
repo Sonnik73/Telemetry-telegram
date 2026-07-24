@@ -14,6 +14,8 @@ import dev.g000sha256.tdl.dto.MessageSenderUser
 
 enum class ChatKind { PRIVATE, GROUP, CHANNEL, SECRET }
 
+data class WatchCandidate(val userId: Long, val title: String)
+
 data class ChatSummary(
     val id: Long,
     val title: String,
@@ -52,6 +54,24 @@ class ChatRepository(private val client: TdlClient) {
             chats += chat.toSummary(memberCount = memberCountOf(chat))
         }
         return Result.success(chats)
+    }
+
+    /** Private-chat counterparts (user id + display name) usable as watch targets. */
+    suspend fun privateUsers(): Result<List<WatchCandidate>> {
+        val chats = loadAllChats().getOrElse { return Result.failure(it) }
+        val candidates = ArrayList<WatchCandidate>()
+        for (summary in chats) {
+            if (summary.kind != ChatKind.PRIVATE) continue
+            val chat = when (val result = client.getChat(summary.id)) {
+                is TdlResult.Success -> result.result
+                is TdlResult.Failure -> continue
+            }
+            val type = chat.type
+            if (type is ChatTypePrivate) {
+                candidates += WatchCandidate(userId = type.userId, title = summary.title)
+            }
+        }
+        return Result.success(candidates)
     }
 
     suspend fun getChat(chatId: Long): ChatSummary? {

@@ -20,6 +20,8 @@ import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.OverviewScreen
+import com.sonnik.telemetry.ui.TrackerScreen
+import com.sonnik.telemetry.ui.TrackerStatsScreen
 import com.sonnik.telemetry.ui.theme.TelemetryTheme
 
 class MainActivity : ComponentActivity() {
@@ -41,10 +43,19 @@ private fun TelemetryNavHost() {
     val telegram = TelemetryApp.instance.telegram
     val authState by telegram.authState.collectAsState()
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(authState) {
         when (authState) {
-            is AuthUiState.Ready -> navController.navigate("chats") {
-                popUpTo("auth") { inclusive = true }
+            is AuthUiState.Ready -> {
+                navController.navigate("chats") {
+                    popUpTo("auth") { inclusive = true }
+                }
+                // Resume background presence tracking if any contacts are watched.
+                val app = TelemetryApp.instance
+                if (app.presence.store.watchedIds().isNotEmpty()) {
+                    app.presence.start()
+                    com.sonnik.telemetry.presence.PresenceService.start(context)
+                }
             }
             is AuthUiState.WaitPhoneNumber,
             is AuthUiState.NeedApiCredentials -> navController.navigate("auth") {
@@ -63,6 +74,7 @@ private fun TelemetryNavHost() {
                 onOpenChat = { chatId -> navController.navigate("chat/$chatId") },
                 onOpenAccount = { navController.navigate("account") },
                 onOpenOverview = { navController.navigate("overview") },
+                onOpenTracker = { navController.navigate("tracker") },
             )
         }
         composable(
@@ -91,6 +103,19 @@ private fun TelemetryNavHost() {
                 onBack = { navController.popBackStack() },
                 onOpenChat = { chatId -> navController.navigate("chat/$chatId") },
             )
+        }
+        composable("tracker") {
+            TrackerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenUser = { userId -> navController.navigate("tracker/$userId") },
+            )
+        }
+        composable(
+            route = "tracker/{userId}",
+            arguments = listOf(navArgument("userId") { type = NavType.LongType }),
+        ) { entry ->
+            val userId = entry.arguments?.getLong("userId") ?: return@composable
+            TrackerStatsScreen(userId = userId, onBack = { navController.popBackStack() })
         }
     }
 }

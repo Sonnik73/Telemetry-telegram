@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,7 +45,12 @@ import com.sonnik.telemetry.data.ChatSummary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenAccount: () -> Unit, onOpenOverview: () -> Unit) {
+fun ChatListScreen(
+    onOpenChat: (Long) -> Unit,
+    onOpenAccount: () -> Unit,
+    onOpenOverview: () -> Unit,
+    onOpenTracker: () -> Unit,
+) {
     val repository = TelemetryApp.instance.chats
 
     var chats by remember { mutableStateOf<List<ChatSummary>?>(null) }
@@ -72,6 +78,9 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenAccount: () -> Unit, onOpen
                     }
                     IconButton(onClick = onOpenOverview) {
                         Icon(Icons.Default.BarChart, contentDescription = "Сводка по аккаунту")
+                    }
+                    IconButton(onClick = onOpenTracker) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Онлайн-трекер")
                     }
                     IconButton(onClick = onOpenAccount) {
                         Icon(Icons.Default.AccountCircle, contentDescription = "Аккаунт")

@@ -3,6 +3,8 @@ package com.sonnik.telemetry
 import android.app.Application
 import android.util.Log
 import com.sonnik.telemetry.data.ChatRepository
+import com.sonnik.telemetry.presence.PresenceStore
+import com.sonnik.telemetry.presence.PresenceTracker
 import com.sonnik.telemetry.td.TelegramClient
 import java.io.File
 import java.text.SimpleDateFormat
@@ -15,6 +17,10 @@ class TelemetryApp : Application() {
         private set
 
     val chats: ChatRepository by lazy { ChatRepository(telegram.client) }
+
+    val presence: PresenceTracker by lazy {
+        PresenceTracker(this, telegram, PresenceStore(this))
+    }
 
     private val crashFile: File
         get() = File(filesDir, "last_crash.txt")
