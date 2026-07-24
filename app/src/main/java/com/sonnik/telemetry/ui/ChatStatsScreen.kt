@@ -257,6 +257,15 @@ private fun DeepStatsCards(stats: DeepStats) {
         }
     }
 
+    if (stats.perDay.isNotEmpty()) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Активность по дням", style = MaterialTheme.typography.titleMedium)
+                ActivityChart(stats.perDay)
+            }
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Активность", style = MaterialTheme.typography.titleMedium)
