@@ -8,12 +8,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -26,6 +31,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
+import com.sonnik.telemetry.td.TelegramClient
 import com.sonnik.telemetry.td.TelegramClient.AuthUiState
 
 @Composable
@@ -34,6 +40,8 @@ fun AuthScreen() {
     val state by telegram.authState.collectAsState()
     val error by telegram.lastError.collectAsState()
     val busy by telegram.busy.collectAsState()
+    val connection by telegram.connectionState.collectAsState()
+    val proxyInfo by telegram.proxyInfo.collectAsState()
 
     Scaffold { padding ->
         Column(
@@ -67,6 +75,114 @@ fun AuthScreen() {
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
+
+            connection?.let {
+                Text("Соединение: $it", style = MaterialTheme.typography.bodySmall)
+            }
+
+            ProxySection(proxyInfo = proxyInfo, busy = busy)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProxySection(proxyInfo: String?, busy: Boolean) {
+    val telegram = TelemetryApp.instance.telegram
+    var expanded by remember { mutableStateOf(false) }
+    var kind by remember { mutableStateOf(TelegramClient.ProxyKind.SOCKS5) }
+    var server by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var secret by remember { mutableStateOf("") }
+
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(
+            when {
+                proxyInfo != null -> "Прокси: $proxyInfo"
+                expanded -> "Скрыть настройки прокси"
+                else -> "Настроить прокси (если не подключается)"
+            },
+        )
+    }
+    if (!expanded) return
+
+    Text(
+        "Если Telegram недоступен напрямую, укажите SOCKS5/HTTP-прокси или MTProto-прокси " +
+            "(их публикуют, например, каналы @proxy_socks5 и @mtproto_proxies).",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TelegramClient.ProxyKind.entries.forEach { candidate ->
+            FilterChip(
+                selected = kind == candidate,
+                onClick = { kind = candidate },
+                label = { Text(candidate.name) },
+            )
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = server,
+            onValueChange = { server = it },
+            label = { Text("Сервер") },
+            singleLine = true,
+            modifier = Modifier.weight(2f),
+        )
+        OutlinedTextField(
+            value = port,
+            onValueChange = { port = it.filter(Char::isDigit) },
+            label = { Text("Порт") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f),
+        )
+    }
+    if (kind == TelegramClient.ProxyKind.MTPROTO) {
+        OutlinedTextField(
+            value = secret,
+            onValueChange = { secret = it },
+            label = { Text("Секрет") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Логин (не обяз.)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Пароль (не обяз.)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                telegram.applyProxy(kind, server, port.toIntOrNull() ?: 0, username, password, secret)
+            },
+            enabled = !busy && server.isNotBlank() && (port.toIntOrNull() ?: 0) in 1..65535 &&
+                (kind != TelegramClient.ProxyKind.MTPROTO || secret.isNotBlank()),
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Применить")
+        }
+        OutlinedButton(
+            onClick = { telegram.disableProxy() },
+            enabled = proxyInfo != null,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Отключить")
         }
     }
 }

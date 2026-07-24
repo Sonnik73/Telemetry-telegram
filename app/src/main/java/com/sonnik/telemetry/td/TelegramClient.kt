@@ -12,6 +12,16 @@ import dev.g000sha256.tdl.dto.AuthorizationStateWaitCode
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitPassword
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitPhoneNumber
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitTdlibParameters
+import dev.g000sha256.tdl.dto.ConnectionState
+import dev.g000sha256.tdl.dto.ConnectionStateConnecting
+import dev.g000sha256.tdl.dto.ConnectionStateConnectingToProxy
+import dev.g000sha256.tdl.dto.ConnectionStateReady
+import dev.g000sha256.tdl.dto.ConnectionStateUpdating
+import dev.g000sha256.tdl.dto.ConnectionStateWaitingForNetwork
+import dev.g000sha256.tdl.dto.Proxy
+import dev.g000sha256.tdl.dto.ProxyTypeHttp
+import dev.g000sha256.tdl.dto.ProxyTypeMtproto
+import dev.g000sha256.tdl.dto.ProxyTypeSocks5
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Owns the TDLib client instance and drives the authorization state machine.
@@ -55,9 +66,17 @@ class TelegramClient(context: Context) {
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy
 
+    private val _connectionState = MutableStateFlow<String?>(null)
+    val connectionState: StateFlow<String?> = _connectionState
+
+    private val _proxyInfo = MutableStateFlow<String?>(null)
+    val proxyInfo: StateFlow<String?> = _proxyInfo
+
     // WaitTdlibParameters can be observed twice (recovered state + live update);
     // TDLib rejects a second setTdlibParameters, so send it only once.
     private var parametersSent = false
+
+    enum class ProxyKind { SOCKS5, HTTP, MTPROTO }
 
     val hasApiCredentials: Boolean
         get() = prefs.getInt(KEY_API_ID, 0) != 0 && !prefs.getString(KEY_API_HASH, null).isNullOrBlank()
@@ -77,6 +96,72 @@ class TelegramClient(context: Context) {
                 is TdlResult.Failure -> _lastError.value = "${result.code}: ${result.message}"
             }
         }
+        scope.launch {
+            client.connectionStateUpdates.collect { update ->
+                _connectionState.value = describeConnectionState(update.state)
+            }
+        }
+        scope.launch {
+            refreshProxyInfo()
+        }
+    }
+
+    private fun describeConnectionState(state: ConnectionState): String = when (state) {
+        is ConnectionStateWaitingForNetwork -> "ожидание сети"
+        is ConnectionStateConnectingToProxy -> "подключение к прокси…"
+        is ConnectionStateConnecting -> "подключение к серверам Telegram…"
+        is ConnectionStateUpdating -> "синхронизация…"
+        is ConnectionStateReady -> "подключено"
+        else -> "…"
+    }
+
+    fun applyProxy(
+        kind: ProxyKind,
+        server: String,
+        port: Int,
+        username: String,
+        password: String,
+        secret: String,
+    ) {
+        scope.launch {
+            _busy.value = true
+            // Keep a single proxy configured: drop whatever was added before.
+            (client.getProxies() as? TdlResult.Success)?.result?.proxies?.forEach { client.removeProxy(it.id) }
+            val type = when (kind) {
+                ProxyKind.SOCKS5 -> ProxyTypeSocks5(username, password)
+                ProxyKind.HTTP -> ProxyTypeHttp(username, password, httpOnly = false)
+                ProxyKind.MTPROTO -> ProxyTypeMtproto(secret)
+            }
+            when (val result = client.addProxy(Proxy(server.trim(), port, type), enable = true, comment = "")) {
+                is TdlResult.Success -> {
+                    _lastError.value = null
+                    _proxyInfo.value = "${kind.name}: ${server.trim()}:$port"
+                }
+                is TdlResult.Failure -> _lastError.value = "${result.code}: ${result.message}"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun disableProxy() {
+        scope.launch {
+            (client.getProxies() as? TdlResult.Success)?.result?.proxies?.forEach { client.removeProxy(it.id) }
+            client.disableProxy()
+            _proxyInfo.value = null
+        }
+    }
+
+    private suspend fun refreshProxyInfo() {
+        val enabled = (client.getProxies() as? TdlResult.Success)
+            ?.result?.proxies?.firstOrNull { it.isEnabled }
+            ?: return
+        val kind = when (enabled.proxy.type) {
+            is ProxyTypeSocks5 -> "SOCKS5"
+            is ProxyTypeHttp -> "HTTP"
+            is ProxyTypeMtproto -> "MTPROTO"
+            else -> "PROXY"
+        }
+        _proxyInfo.value = "$kind: ${enabled.proxy.server}:${enabled.proxy.port}"
     }
 
     fun saveApiCredentials(apiId: Int, apiHash: String) {
@@ -109,7 +194,10 @@ class TelegramClient(context: Context) {
     private fun <T> runAuthRequest(block: suspend () -> TdlResult<T>) {
         scope.launch {
             _busy.value = true
-            when (val result = block()) {
+            when (val result = withTimeoutOrNull(45_000) { block() }) {
+                null -> _lastError.value =
+                    "Telegram не ответил за 45 секунд. Похоже, прямое подключение блокируется — " +
+                        "попробуйте настроить прокси внизу экрана."
                 is TdlResult.Success -> _lastError.value = null
                 is TdlResult.Failure -> _lastError.value = "${result.code}: ${result.message}"
             }
