@@ -71,6 +71,13 @@ data class ScanProgress(val processed: Int, val estimatedTotal: Int?, val reache
 
 class StatsEngine(private val client: TdlClient) {
 
+    /** Server-side total message count for a chat; null when unavailable. */
+    suspend fun totalMessages(chatId: Long): Int? =
+        when (val result = client.getChatMessageCount(chatId = chatId, filter = SearchMessagesFilterEmpty(), returnLocal = false)) {
+            is TdlResult.Success -> result.result.count
+            is TdlResult.Failure -> null
+        }
+
     suspend fun quickCounts(chatId: Long): QuickCounts {
         suspend fun count(filter: SearchMessagesFilter): Int? =
             when (val result = client.getChatMessageCount(chatId = chatId, filter = filter, returnLocal = false)) {

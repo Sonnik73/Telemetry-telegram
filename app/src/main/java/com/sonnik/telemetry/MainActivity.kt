@@ -61,6 +61,7 @@ private fun TelemetryNavHost() {
             ChatListScreen(
                 onOpenChat = { chatId -> navController.navigate("chat/$chatId") },
                 onOpenAccount = { navController.navigate("account") },
+                onOpenOverview = { navController.navigate("overview") },
             )
         }
         composable(
@@ -83,6 +84,12 @@ private fun TelemetryNavHost() {
         }
         composable("account") {
             AccountScreen(onBack = { navController.popBackStack() })
+        }
+        composable("overview") {
+            OverviewScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId") },
+            )
         }
     }
 }
