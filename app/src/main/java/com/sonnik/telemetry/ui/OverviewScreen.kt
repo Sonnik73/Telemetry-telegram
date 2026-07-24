@@ -201,7 +201,7 @@ private fun SummaryCards(counts: List<ChatCount>, partial: Boolean, onOpenChat: 
                         }
                         Box(
                             Modifier
-                                .fillMaxWidth(fraction = (entry.total.toFloat() / maxCount).coerceIn(0.02f, 1f))
+                                .fillMaxWidth(fraction = (entry.total!!.toFloat() / maxCount).coerceIn(0.02f, 1f))
                                 .height(6.dp)
                                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp)),
                         )

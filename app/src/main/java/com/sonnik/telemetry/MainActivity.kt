@@ -19,6 +19,7 @@ import com.sonnik.telemetry.ui.AuthScreen
 import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.ExportScreen
+import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.theme.TelemetryTheme
 
 class MainActivity : ComponentActivity() {
