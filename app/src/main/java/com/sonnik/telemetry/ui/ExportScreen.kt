@@ -1,5 +1,6 @@
 package com.sonnik.telemetry.ui
 
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -10,16 +11,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,16 +35,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ChatSummary
 import com.sonnik.telemetry.export.ChatExporter
 import com.sonnik.telemetry.export.ExportFormat
 import com.sonnik.telemetry.export.ExportPhase
+import com.sonnik.telemetry.export.MediaSink
 import com.sonnik.telemetry.stats.StatsEngine
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.time.ZoneId
 import java.util.Date
@@ -53,13 +60,14 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ExportScreen(chatId: Long, onBack: () -> Unit) {
     val app = TelemetryApp.instance
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { StatsEngine(app.telegram.client) }
-    val exporter = remember { ChatExporter(engine, app.chats, context.cacheDir) }
+    val exporter = remember { ChatExporter(app.telegram.client, engine, app.chats, context.cacheDir) }
 
     var chat by remember { mutableStateOf<ChatSummary?>(null) }
     var format by remember { mutableStateOf(ExportFormat.JSON) }
+    var downloadMedia by remember { mutableStateOf(false) }
     var fromText by remember { mutableStateOf("") }
     var toText by remember { mutableStateOf("") }
     var phase by remember { mutableStateOf<ExportPhase?>(null) }
@@ -70,10 +78,17 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
         chat = app.chats.getChat(chatId)
     }
 
-    val createDocument = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(format.mimeType),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun exportName(): String {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+        val safeTitle = (chat?.title ?: "chat")
+            .replace(Regex("[^\\p{L}\\p{N} _-]"), "")
+            .trim()
+            .replace(' ', '_')
+            .ifBlank { "chat" }
+        return "${safeTitle}_$stamp"
+    }
+
+    fun runExport(output: OutputStream, mediaSink: MediaSink?) {
         val zone = ZoneId.systemDefault()
         val from = fromText.trim().takeIf { it.isNotEmpty() }?.let(::parseDateOrNull)
         val to = toText.trim().takeIf { it.isNotEmpty() }?.let(::parseDateOrNull)
@@ -81,12 +96,6 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
         isError = false
         scope.launch {
             try {
-                val stream = context.contentResolver.openOutputStream(uri)
-                if (stream == null) {
-                    status = "Не удалось открыть файл для записи"
-                    isError = true
-                    return@launch
-                }
                 val result = withContext(Dispatchers.IO) {
                     exporter.export(
                         chatId = chatId,
@@ -95,7 +104,8 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         fromDateSec = from?.atStartOfDay(zone)?.toEpochSecond()?.toInt() ?: 0,
                         toDateSec = to?.plusDays(1)?.atStartOfDay(zone)?.toEpochSecond()?.toInt()?.minus(1) ?: 0,
                         estimatedTotal = null,
-                        output = stream,
+                        output = output,
+                        mediaSink = mediaSink,
                         onProgress = { phase = it },
                     )
                 }
@@ -103,7 +113,12 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                     status = "Ошибка экспорта: ${result.error}"
                     isError = true
                 } else {
-                    status = "Готово: выгружено ${formatCount(result.messages)} сообщений"
+                    status = buildString {
+                        append("Готово: выгружено ${formatCount(result.messages)} сообщений")
+                        if (result.downloadedFiles > 0) {
+                            append(", медиа: ${formatCount(result.downloadedFiles)} файлов (${formatBytes(result.downloadedBytes)})")
+                        }
+                    }
                     isError = false
                 }
             } catch (e: Exception) {
@@ -113,6 +128,42 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                 phase = null
             }
         }
+    }
+
+    val createDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(format.mimeType),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val stream = context.contentResolver.openOutputStream(uri)
+        if (stream == null) {
+            status = "Не удалось открыть файл для записи"
+            isError = true
+        } else {
+            runExport(stream, mediaSink = null)
+        }
+    }
+
+    val openTree = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val tree = DocumentFile.fromTreeUri(context, uri)
+        val folder = tree?.createDirectory(exportName())
+        val chatFile = folder?.createFile(format.mimeType, "chat.${format.extension}")
+        val filesDir = folder?.createDirectory("files")
+        val stream = chatFile?.uri?.let { context.contentResolver.openOutputStream(it) }
+        if (folder == null || filesDir == null || stream == null) {
+            status = "Не удалось создать папку экспорта"
+            isError = true
+            return@rememberLauncherForActivityResult
+        }
+        val sink = MediaSink { name ->
+            val extension = name.substringAfterLast('.', "")
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase(Locale.US))
+                ?: "application/octet-stream"
+            filesDir.createFile(mime, name)?.uri?.let { context.contentResolver.openOutputStream(it) }
+        }
+        runExport(stream, sink)
     }
 
     Scaffold(
@@ -154,6 +205,22 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                             )
                         }
                     }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(value = downloadMedia, onValueChange = { downloadMedia = it }),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = downloadMedia, onCheckedChange = { downloadMedia = it })
+                        Text("Скачивать медиафайлы (фото, видео, документы — в папку рядом)")
+                    }
+                    if (downloadMedia) {
+                        Text(
+                            "Понадобится выбрать папку. Экспорт будет заметно дольше, объём — " +
+                                "как суммарный размер медиа в чате. В HTML медиа встраиваются в страницу.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
 
@@ -187,13 +254,11 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
             if (currentPhase == null) {
                 Button(
                     onClick = {
-                        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-                        val safeTitle = (chat?.title ?: "chat")
-                            .replace(Regex("[^\\p{L}\\p{N} _-]"), "")
-                            .trim()
-                            .replace(' ', '_')
-                            .ifBlank { "chat" }
-                        createDocument.launch("${safeTitle}_$stamp.${format.extension}")
+                        if (downloadMedia) {
+                            openTree.launch(null)
+                        } else {
+                            createDocument.launch("${exportName()}.${format.extension}")
+                        }
                     },
                     enabled = chat != null &&
                         (fromText.isBlank() || parseDateOrNull(fromText) != null) &&
@@ -214,7 +279,15 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         } else {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                         }
-                        Text("Читаем историю: ${formatCount(currentPhase.processed)} сообщений…")
+                        Text(
+                            buildString {
+                                append("Читаем историю: ${formatCount(currentPhase.processed)} сообщений")
+                                if (currentPhase.downloadedFiles > 0) {
+                                    append(" · медиа: ${formatCount(currentPhase.downloadedFiles)} (${formatBytes(currentPhase.downloadedBytes)})")
+                                }
+                                append("…")
+                            },
+                        )
                     }
                     is ExportPhase.Writing -> {
                         LinearProgressIndicator(
