@@ -23,6 +23,7 @@ import java.io.OutputStreamWriter
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Date
 import java.util.Locale
 import org.json.JSONObject
@@ -40,7 +41,12 @@ sealed interface ExportPhase {
         val downloadedBytes: Long = 0,
     ) : ExportPhase
 
-    data class Writing(val written: Int, val total: Int) : ExportPhase
+    data class Writing(
+        val written: Int,
+        val total: Int,
+        val embeddedFiles: Int = 0,
+        val embeddedBytes: Long = 0,
+    ) : ExportPhase
 }
 
 /** Destination for downloaded media files; returns null when a file cannot be created. */
@@ -53,9 +59,14 @@ fun interface MediaSink {
  * so messages are first spooled to a temp JSONL file and then written to the
  * destination in chronological order using recorded line offsets.
  *
- * With a [MediaSink] attached, each media file is downloaded through TDLib,
- * copied into the sink under `files/<name>` and evicted from the TDLib cache
- * so mass exports don't fill device storage.
+ * Media handling has two modes:
+ *  - [MediaSink] (JSON export): each file is downloaded, copied into a `files/`
+ *    folder next to the export and evicted from the TDLib cache.
+ *  - inline (HTML export): the export is a single self-contained file; each
+ *    media file is downloaded during the write phase, streamed into the page as
+ *    a base64 `data:` URI and immediately deleted, so the HTML opens and plays
+ *    anywhere without depending on sibling files. Files larger than
+ *    [MAX_INLINE_BYTES] are shown as a note instead, to keep the page openable.
  */
 class ChatExporter(
     private val client: TdlClient,
@@ -73,6 +84,7 @@ class ChatExporter(
         estimatedTotal: Int?,
         output: OutputStream,
         mediaSink: MediaSink? = null,
+        inlineMedia: Boolean = false,
         onProgress: (ExportPhase) -> Unit,
     ): ExportResult {
         val tempFile = File.createTempFile("export", ".jsonl", cacheDir)
@@ -97,9 +109,13 @@ class ChatExporter(
                             repository.senderName(message.senderId)
                         }
                         val json = message.toJson(senderName, senderKey)
-                        if (mediaSink != null) {
-                            val media = message.mediaFile()
-                            if (media != null) {
+                        val media = message.mediaFile()
+                        if (media != null) {
+                            if (inlineMedia) {
+                                // Defer the download to the write phase so only one
+                                // media file lives on disk at a time.
+                                json.put("_fid", media.first.id)
+                            } else if (mediaSink != null) {
                                 when (val saved = downloadInto(mediaSink, media.first, media.second)) {
                                     is DownloadOutcome.Saved -> {
                                         json.put("file", "files/${media.second}")
@@ -117,21 +133,33 @@ class ChatExporter(
                         bytesWritten += line.size + 1
                     },
                 )
-                if (stats.error != null) {
+                if (stats.error != null && offsets.isEmpty()) {
                     return ExportResult(0, error = stats.error)
                 }
             }
 
             val total = offsets.size
+            var embeddedFiles = 0
+            var embeddedBytes = 0L
             OutputStreamWriter(output, StandardCharsets.UTF_8).buffered().use { writer ->
                 RandomAccessFile(tempFile, "r").use { spool ->
                     when (format) {
-                        ExportFormat.JSON -> writeJson(writer, spool, offsets, chatId, chatTitle, fromDateSec, toDateSec, onProgress)
-                        ExportFormat.HTML -> writeHtml(writer, spool, offsets, chatTitle, fromDateSec, toDateSec, onProgress)
+                        ExportFormat.JSON ->
+                            writeJson(writer, spool, offsets, chatId, chatTitle, fromDateSec, toDateSec, onProgress)
+                        ExportFormat.HTML -> {
+                            val result = writeHtml(writer, spool, offsets, chatTitle, fromDateSec, toDateSec, inlineMedia, onProgress)
+                            embeddedFiles = result.first
+                            embeddedBytes = result.second
+                        }
                     }
                 }
             }
-            return ExportResult(total, error = null, downloadedFiles = downloadedFiles, downloadedBytes = downloadedBytes)
+            return ExportResult(
+                messages = total,
+                error = null,
+                downloadedFiles = if (inlineMedia) embeddedFiles else downloadedFiles,
+                downloadedBytes = if (inlineMedia) embeddedBytes else downloadedBytes,
+            )
         } finally {
             tempFile.delete()
         }
@@ -143,20 +171,22 @@ class ChatExporter(
     }
 
     private suspend fun downloadInto(sink: MediaSink, file: TdFile, name: String): DownloadOutcome {
-        val downloaded = when (val result = client.downloadFile(file.id, priority = 1, offset = 0, limit = 0, synchronous = true)) {
-            is TdlResult.Success -> result.result
-            is TdlResult.Failure -> return DownloadOutcome.Failed("${result.code}: ${result.message}")
-        }
-        val path = downloaded.local.path
-        if (!downloaded.local.isDownloadingCompleted || path.isEmpty()) {
-            return DownloadOutcome.Failed("download incomplete")
-        }
+        val path = downloadToPath(file.id) ?: return DownloadOutcome.Failed("download incomplete")
         val source = File(path)
         val stream = sink.open(name) ?: return DownloadOutcome.Failed("cannot create $name")
         val copied = stream.use { out -> source.inputStream().use { it.copyTo(out) } }
-        // Evict from the TDLib cache: the exported copy is now the canonical one.
         client.deleteFile(file.id)
         return DownloadOutcome.Saved(copied)
+    }
+
+    /** Downloads a file synchronously and returns its local path, or null on failure. */
+    private suspend fun downloadToPath(fileId: Int): String? {
+        val downloaded = when (val result = client.downloadFile(fileId, priority = 1, offset = 0, limit = 0, synchronous = true)) {
+            is TdlResult.Success -> result.result
+            is TdlResult.Failure -> return null
+        }
+        val path = downloaded.local.path
+        return if (downloaded.local.isDownloadingCompleted && path.isNotEmpty()) path else null
     }
 
     /** Returns the primary media file of a message plus a unique export file name. */
@@ -209,8 +239,10 @@ class ChatExporter(
         writer.write("  \"messages_count\": ${offsets.size},\n")
         writer.write("  \"messages\": [\n")
         for (i in offsets.indices.reversed()) {
+            val message = JSONObject(readLineAt(spool, offsets, i))
+            message.remove("_fid")
             writer.write("    ")
-            writer.write(readLineAt(spool, offsets, i))
+            writer.write(message.toString())
             if (i > 0) writer.write(",")
             writer.write("\n")
             val written = offsets.size - i
@@ -220,15 +252,17 @@ class ChatExporter(
         onProgress(ExportPhase.Writing(offsets.size, offsets.size))
     }
 
-    private fun writeHtml(
+    /** Returns the number of embedded files and their total byte size. */
+    private suspend fun writeHtml(
         writer: BufferedWriter,
         spool: RandomAccessFile,
         offsets: List<Long>,
         chatTitle: String,
         fromDateSec: Int,
         toDateSec: Int,
+        inlineMedia: Boolean,
         onProgress: (ExportPhase) -> Unit,
-    ) {
+    ): Pair<Int, Long> {
         val period = buildString {
             if (fromDateSec > 0) append("с ${isoDate(fromDateSec.toLong()).take(10)} ")
             if (toDateSec > 0) append("по ${isoDate(toDateSec.toLong()).take(10)}")
@@ -237,6 +271,7 @@ class ChatExporter(
             """
             <!DOCTYPE html>
             <html lang="ru"><head><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>${escapeHtml(chatTitle)}</title>
             <style>
             body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px;background:#f4f6f8;color:#111}
@@ -244,7 +279,7 @@ class ChatExporter(
             .from{font-weight:600;color:#1c93e3}
             .date{color:#888;font-size:.8em;margin-left:8px}
             .media{color:#555;font-style:italic}
-            img,video{max-width:100%;border-radius:8px;margin-top:6px}
+            img,video{max-width:100%;border-radius:8px;margin-top:6px;display:block}
             audio{width:100%;margin-top:6px}
             h1{font-size:1.3em}
             </style></head><body>
@@ -253,6 +288,8 @@ class ChatExporter(
             """.trimIndent(),
         )
         writer.write("\n")
+        var embeddedFiles = 0
+        var embeddedBytes = 0L
         for (i in offsets.indices.reversed()) {
             val message = JSONObject(readLineAt(spool, offsets, i))
             writer.write("<div class=\"msg\"><span class=\"from\">")
@@ -260,25 +297,26 @@ class ChatExporter(
             writer.write("</span><span class=\"date\">")
             writer.write(escapeHtml(message.optString("date")))
             writer.write("</span>")
+
             val type = message.optString("type")
-            val filePath = message.optString("file")
-            if (filePath.isNotEmpty()) {
-                val src = escapeHtml(filePath)
-                when (type) {
-                    "photo", "sticker" -> writer.write("<br><img loading=\"lazy\" src=\"$src\">")
-                    "video", "gif", "video_note" -> writer.write("<br><video controls preload=\"none\" src=\"$src\"></video>")
-                    "voice", "audio" -> writer.write("<br><audio controls preload=\"none\" src=\"$src\"></audio>")
-                    else -> writer.write("<div class=\"media\"><a href=\"$src\">${escapeHtml(message.optString("file_name", filePath.removePrefix("files/")))}</a></div>")
+            val fileId = if (inlineMedia && message.has("_fid")) message.optInt("_fid") else 0
+            val sizeBytes = message.optLong("size_bytes", -1)
+            if (fileId != 0) {
+                if (sizeBytes in 0..MAX_INLINE_BYTES) {
+                    val bytes = embedMedia(writer, type, fileId, message.optString("file_name"))
+                    if (bytes >= 0) {
+                        embeddedFiles++
+                        embeddedBytes += bytes
+                    } else {
+                        writeMediaNote(writer, type, message, "не удалось скачать")
+                    }
+                } else {
+                    writeMediaNote(writer, type, message, "слишком большой для встраивания")
                 }
             } else if (type != "text") {
-                writer.write("<div class=\"media\">[")
-                writer.write(escapeHtml(type))
-                val fileName = message.optString("file_name")
-                if (fileName.isNotEmpty()) writer.write(": ${escapeHtml(fileName)}")
-                val size = message.optLong("size_bytes", -1)
-                if (size >= 0) writer.write(", ${size / 1024} KB")
-                writer.write("]</div>")
+                writeMediaNote(writer, type, message, null)
             }
+
             val text = message.optString("text")
             if (text.isNotEmpty()) {
                 writer.write("<div>")
@@ -287,10 +325,125 @@ class ChatExporter(
             }
             writer.write("</div>\n")
             val written = offsets.size - i
-            if (written % 500 == 0) onProgress(ExportPhase.Writing(written, offsets.size))
+            if (written % 100 == 0) {
+                onProgress(ExportPhase.Writing(written, offsets.size, embeddedFiles, embeddedBytes))
+            }
         }
         writer.write("</body></html>\n")
-        onProgress(ExportPhase.Writing(offsets.size, offsets.size))
+        onProgress(ExportPhase.Writing(offsets.size, offsets.size, embeddedFiles, embeddedBytes))
+        return embeddedFiles to embeddedBytes
+    }
+
+    /**
+     * Downloads [fileId], streams it into [writer] as a base64 data URI wrapped in
+     * the right media element, then deletes it from the cache. Returns the byte
+     * size embedded, or -1 on failure.
+     */
+    private suspend fun embedMedia(writer: BufferedWriter, type: String, fileId: Int, fileName: String): Long {
+        val path = downloadToPath(fileId) ?: return -1
+        val source = File(path)
+        val mime = mimeFor(type, fileName)
+        try {
+            when (type) {
+                "photo", "sticker" -> {
+                    writer.write("<br><img loading=\"lazy\" src=\"data:$mime;base64,")
+                    val n = streamBase64(source, writer)
+                    writer.write("\">")
+                    return n
+                }
+                "video", "gif", "video_note" -> {
+                    writer.write("<br><video controls playsinline src=\"data:$mime;base64,")
+                    val n = streamBase64(source, writer)
+                    writer.write("\"></video>")
+                    return n
+                }
+                "voice", "audio" -> {
+                    writer.write("<br><audio controls src=\"data:$mime;base64,")
+                    val n = streamBase64(source, writer)
+                    writer.write("\"></audio>")
+                    return n
+                }
+                else -> {
+                    val label = escapeHtml(fileName.ifBlank { "файл" })
+                    writer.write("<div class=\"media\"><a download=\"$label\" href=\"data:$mime;base64,")
+                    val n = streamBase64(source, writer)
+                    writer.write("\">$label</a></div>")
+                    return n
+                }
+            }
+        } finally {
+            client.deleteFile(fileId)
+        }
+    }
+
+    /** Streams [source] as standard base64 into [writer] without loading it whole. */
+    private fun streamBase64(source: File, writer: BufferedWriter): Long {
+        val encoder = Base64.getEncoder()
+        var total = 0L
+        source.inputStream().buffered().use { input ->
+            // 3 * 1024 keeps each chunk a multiple of 3 bytes, so no padding appears
+            // mid-stream and the concatenated output stays valid base64.
+            val buffer = ByteArray(3 * 1024)
+            while (true) {
+                val read = input.readNBytesCompat(buffer)
+                if (read <= 0) break
+                total += read
+                val slice = if (read == buffer.size) buffer else buffer.copyOf(read)
+                writer.write(encoder.encodeToString(slice))
+            }
+        }
+        return total
+    }
+
+    private fun java.io.InputStream.readNBytesCompat(buffer: ByteArray): Int {
+        var offset = 0
+        while (offset < buffer.size) {
+            val read = read(buffer, offset, buffer.size - offset)
+            if (read < 0) break
+            offset += read
+        }
+        return offset
+    }
+
+    private fun writeMediaNote(writer: BufferedWriter, type: String, message: JSONObject, reason: String?) {
+        writer.write("<div class=\"media\">[")
+        writer.write(escapeHtml(mediaLabel(type)))
+        val fileName = message.optString("file_name")
+        if (fileName.isNotEmpty()) writer.write(": ${escapeHtml(fileName)}")
+        val size = message.optLong("size_bytes", -1)
+        if (size >= 0) writer.write(", ${size / 1024} КБ")
+        if (reason != null) writer.write(" — $reason")
+        writer.write("]</div>")
+    }
+
+    private fun mediaLabel(type: String): String = when (type) {
+        "photo" -> "фото"
+        "video" -> "видео"
+        "gif" -> "GIF"
+        "video_note" -> "видеосообщение"
+        "voice" -> "голосовое"
+        "audio" -> "аудио"
+        "sticker" -> "стикер"
+        "document" -> "файл"
+        else -> type
+    }
+
+    private fun mimeFor(type: String, fileName: String): String = when (type) {
+        "photo" -> "image/jpeg"
+        "sticker" -> "image/webp"
+        "video", "gif", "video_note" -> "video/mp4"
+        "voice" -> "audio/ogg"
+        "audio" -> "audio/mpeg"
+        else -> when (fileName.substringAfterLast('.', "").lowercase(Locale.US)) {
+            "pdf" -> "application/pdf"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "mp4" -> "video/mp4"
+            "mp3" -> "audio/mpeg"
+            "zip" -> "application/zip"
+            else -> "application/octet-stream"
+        }
     }
 
     private fun Message.toJson(senderName: String, senderKey: String): JSONObject {
@@ -346,6 +499,11 @@ class ChatExporter(
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
+
+    private companion object {
+        // Cap per-file inlining so the self-contained HTML stays openable in a browser.
+        const val MAX_INLINE_BYTES = 25L * 1024 * 1024
+    }
 }
 
 data class ExportResult(

@@ -88,7 +88,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
         return "${safeTitle}_$stamp"
     }
 
-    fun runExport(output: OutputStream, mediaSink: MediaSink?) {
+    fun runExport(output: OutputStream, mediaSink: MediaSink?, inlineMedia: Boolean) {
         val zone = ZoneId.systemDefault()
         val from = fromText.trim().takeIf { it.isNotEmpty() }?.let(::parseDateOrNull)
         val to = toText.trim().takeIf { it.isNotEmpty() }?.let(::parseDateOrNull)
@@ -106,6 +106,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         estimatedTotal = null,
                         output = output,
                         mediaSink = mediaSink,
+                        inlineMedia = inlineMedia,
                         onProgress = { phase = it },
                     )
                 }
@@ -139,7 +140,8 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
             status = "Не удалось открыть файл для записи"
             isError = true
         } else {
-            runExport(stream, mediaSink = null)
+            // Single-file HTML export embeds media inline as base64.
+            runExport(stream, mediaSink = null, inlineMedia = downloadMedia && format == ExportFormat.HTML)
         }
     }
 
@@ -163,7 +165,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                 ?: "application/octet-stream"
             filesDir.createFile(mime, name)?.uri?.let { context.contentResolver.openOutputStream(it) }
         }
-        runExport(stream, sink)
+        runExport(stream, sink, inlineMedia = false)
     }
 
     Scaffold(
@@ -212,12 +214,21 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(checked = downloadMedia, onCheckedChange = { downloadMedia = it })
-                        Text("Скачивать медиафайлы (фото, видео, документы — в папку рядом)")
+                        Text("Скачивать медиафайлы (фото, видео, голосовые, документы)")
                     }
                     if (downloadMedia) {
                         Text(
-                            "Понадобится выбрать папку. Экспорт будет заметно дольше, объём — " +
-                                "как суммарный размер медиа в чате. В HTML медиа встраиваются в страницу.",
+                            when (format) {
+                                ExportFormat.HTML ->
+                                    "HTML будет самодостаточным: медиа встраиваются прямо в файл, " +
+                                        "он открывается и проигрывается в любом браузере без папок. " +
+                                        "Файлы крупнее 25 МБ (обычно большие видео) не встраиваются — " +
+                                        "для полного архива видео берите JSON. Экспорт будет дольше."
+                                ExportFormat.JSON ->
+                                    "Понадобится выбрать папку: рядом с chat.json появится подпапка " +
+                                        "files/ со всеми медиа. Экспорт будет дольше, объём — как " +
+                                        "суммарный размер медиа."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -254,7 +265,9 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
             if (currentPhase == null) {
                 Button(
                     onClick = {
-                        if (downloadMedia) {
+                        // JSON + media goes to a folder with a files/ subdir; everything
+                        // else is a single document (HTML embeds media inline).
+                        if (downloadMedia && format == ExportFormat.JSON) {
                             openTree.launch(null)
                         } else {
                             createDocument.launch("${exportName()}.${format.extension}")
@@ -298,7 +311,15 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Text("Записываем файл: ${formatCount(currentPhase.written)} из ${formatCount(currentPhase.total)}…")
+                        Text(
+                            buildString {
+                                append("Записываем файл: ${formatCount(currentPhase.written)} из ${formatCount(currentPhase.total)}")
+                                if (currentPhase.embeddedFiles > 0) {
+                                    append(" · встроено медиа: ${formatCount(currentPhase.embeddedFiles)} (${formatBytes(currentPhase.embeddedBytes)})")
+                                }
+                                append("…")
+                            },
+                        )
                     }
                 }
             }
