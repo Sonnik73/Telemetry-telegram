@@ -45,6 +45,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -161,6 +162,10 @@ fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit) {
                                         deep = engine.resolveSenderNames(raw) { key ->
                                             parseSenderKey(key)?.let { app.chats.senderName(it) } ?: key
                                         }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Throwable) {
+                                        dateError = "Сканирование прервано ошибкой: ${e.message ?: e::class.simpleName}"
                                     } finally {
                                         scanJob = null
                                         progress = null

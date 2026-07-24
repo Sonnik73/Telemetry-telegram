@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -22,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +35,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ChatKind
@@ -54,6 +59,8 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenAccount: () -> Unit, onOpen
             .onSuccess { chats = it }
             .onFailure { error = it.message }
     }
+
+    var crashText by remember { mutableStateOf(TelemetryApp.instance.readLastCrash()) }
 
     Scaffold(
         topBar = {
@@ -78,6 +85,16 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenAccount: () -> Unit, onOpen
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            crashText?.let { crash ->
+                CrashCard(
+                    crash = crash,
+                    onDismiss = {
+                        TelemetryApp.instance.clearLastCrash()
+                        crashText = null
+                    },
+                )
+            }
+
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -111,6 +128,37 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenAccount: () -> Unit, onOpen
                             HorizontalDivider()
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CrashCard(crash: String, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                "В прошлый раз приложение аварийно завершилось",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Text(
+                crash.lineSequence().take(4).joinToString("\n"),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 4,
+            )
+            Row {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(crash)) }) {
+                    Text("Скопировать отчёт")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Скрыть")
                 }
             }
         }

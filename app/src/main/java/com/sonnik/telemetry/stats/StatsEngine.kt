@@ -29,7 +29,10 @@ import dev.g000sha256.tdl.dto.SearchMessagesFilterVoiceNote
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 /** Quick per-type message counts computed server-side; null means unavailable for this chat. */
@@ -109,7 +112,7 @@ class StatsEngine(private val client: TdlClient) {
         estimatedTotal: Int? = null,
         onProgress: (ScanProgress) -> Unit = {},
         onMessage: suspend (Message) -> Unit = {},
-    ): DeepStats {
+    ): DeepStats = withContext(Dispatchers.Default) {
         val zone = ZoneId.systemDefault()
         val media = LinkedHashMap<String, MediaBucket>()
         val senderMessages = HashMap<String, Int>()
@@ -145,30 +148,37 @@ class StatsEngine(private val client: TdlClient) {
                 if (lastDate == 0) lastDate = message.date
                 firstDate = message.date
 
-                val senderKey = message.senderId.key()
-                senderMessages.merge(senderKey, 1, Int::plus)
-                senderIds.putIfAbsent(senderKey, message.senderId)
+                // A single malformed message must not abort a multi-hour scan.
+                try {
+                    val senderKey = message.senderId.key()
+                    senderMessages.merge(senderKey, 1, Int::plus)
+                    senderIds.putIfAbsent(senderKey, message.senderId)
 
-                val day = Instant.ofEpochSecond(message.date.toLong()).atZone(zone).toLocalDate()
-                perDay.merge(day, 1, Int::plus)
+                    val day = Instant.ofEpochSecond(message.date.toLong()).atZone(zone).toLocalDate()
+                    perDay.merge(day, 1, Int::plus)
 
-                when (val content = message.content) {
-                    is MessageText -> {
-                        textMessages++
-                        textCharacters += content.text.text.length
+                    when (val content = message.content) {
+                        is MessageText -> {
+                            textMessages++
+                            textCharacters += content.text.text.length
+                        }
+                        is MessagePhoto -> media.add("Фото", content.photo.sizes.maxOfOrNull { it.photo.sizeOrExpected() } ?: 0)
+                        is MessageVideo -> media.add("Видео", content.video.video.sizeOrExpected())
+                        is MessageDocument -> media.add("Файлы", content.document.document.sizeOrExpected())
+                        is MessageAudio -> media.add("Музыка", content.audio.audio.sizeOrExpected())
+                        is MessageVoiceNote -> media.add("Голосовые", content.voiceNote.voice.sizeOrExpected())
+                        is MessageVideoNote -> media.add("Видеосообщения", content.videoNote.video.sizeOrExpected())
+                        is MessageAnimation -> media.add("GIF", content.animation.animation.sizeOrExpected())
+                        is MessageSticker -> media.add("Стикеры", content.sticker.sticker.sizeOrExpected())
+                        else -> Unit
                     }
-                    is MessagePhoto -> media.add("Фото", content.photo.sizes.maxOfOrNull { it.photo.sizeOrExpected() } ?: 0)
-                    is MessageVideo -> media.add("Видео", content.video.video.sizeOrExpected())
-                    is MessageDocument -> media.add("Файлы", content.document.document.sizeOrExpected())
-                    is MessageAudio -> media.add("Музыка", content.audio.audio.sizeOrExpected())
-                    is MessageVoiceNote -> media.add("Голосовые", content.voiceNote.voice.sizeOrExpected())
-                    is MessageVideoNote -> media.add("Видеосообщения", content.videoNote.video.sizeOrExpected())
-                    is MessageAnimation -> media.add("GIF", content.animation.animation.sizeOrExpected())
-                    is MessageSticker -> media.add("Стикеры", content.sticker.sticker.sizeOrExpected())
-                    else -> Unit
-                }
 
-                onMessage(message)
+                    onMessage(message)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    error = "сообщение ${message.id}: ${e.message ?: e::class.simpleName}"
+                }
             }
             onProgress(ScanProgress(scanned, estimatedTotal, firstDate))
         }
@@ -178,7 +188,7 @@ class StatsEngine(private val client: TdlClient) {
             .take(10)
             .map { SenderStat(name = it.key, messages = it.value) }
 
-        return DeepStats(
+        return@withContext DeepStats(
             scannedMessages = scanned,
             textMessages = textMessages,
             textCharacters = textCharacters,
