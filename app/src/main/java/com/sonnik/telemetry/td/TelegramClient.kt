@@ -55,6 +55,10 @@ class TelegramClient(context: Context) {
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy
 
+    // WaitTdlibParameters can be observed twice (recovered state + live update);
+    // TDLib rejects a second setTdlibParameters, so send it only once.
+    private var parametersSent = false
+
     val hasApiCredentials: Boolean
         get() = prefs.getInt(KEY_API_ID, 0) != 0 && !prefs.getString(KEY_API_HASH, null).isNullOrBlank()
 
@@ -62,6 +66,15 @@ class TelegramClient(context: Context) {
         scope.launch {
             client.authorizationStateUpdates.collect { update ->
                 onAuthorizationState(update.authorizationState)
+            }
+        }
+        scope.launch {
+            // The update flow has no replay: the state TDLib emits at client
+            // creation is lost if it fires before the collector above attaches.
+            // Query the current state explicitly so startup never hangs on it.
+            when (val result = client.getAuthorizationState()) {
+                is TdlResult.Success -> onAuthorizationState(result.result)
+                is TdlResult.Failure -> _lastError.value = "${result.code}: ${result.message}"
             }
         }
     }
@@ -126,6 +139,8 @@ class TelegramClient(context: Context) {
     }
 
     private suspend fun sendTdlibParameters() {
+        if (parametersSent) return
+        parametersSent = true
         val apiId = prefs.getInt(KEY_API_ID, 0)
         val apiHash = prefs.getString(KEY_API_HASH, null) ?: return
         val databaseDirectory = File(appContext.filesDir, "tdlib-db")
@@ -150,6 +165,7 @@ class TelegramClient(context: Context) {
         )
         if (result is TdlResult.Failure) {
             // Wrong api_id/api_hash is the most likely cause; let the user re-enter them.
+            parametersSent = false
             _lastError.value = "${result.code}: ${result.message}"
             _authState.value = AuthUiState.NeedApiCredentials
         }
