@@ -150,7 +150,16 @@ internal inline fun <reified T> JsonObject.getObjectsNullable(key: String, trans
         if (jsonElement == null || jsonElement == JsonNull) {
             return@Array null
         }
-        return@Array transformer.transform(data = jsonElement.jsonObject)
+        // Local resilience fix: TDLib sometimes omits fields its own schema marks
+        // required (e.g. deleted chat backgrounds). Since this array is already
+        // nullable, a single unparsable element becomes null instead of failing
+        // the whole response — a full getChatHistory page must not be lost to one
+        // malformed message.
+        return@Array try {
+            transformer.transform(data = jsonElement.jsonObject)
+        } catch (throwable: Throwable) {
+            null
+        }
     }
 }
 

@@ -9284,7 +9284,7 @@ internal class TdlDeserializer internal constructor() {
 
     private fun deserializeChatBackground(jsonObject: JsonObject): ChatBackground {
         return ChatBackground(
-            background = jsonObject.getObject(key = "background") { data -> deserializeBackground(jsonObject = data) },
+            background = jsonObject.getObjectNullable(key = "background") { data -> deserializeBackground(jsonObject = data) },
             darkThemeDimming = jsonObject.getInt(key = "dark_theme_dimming"),
         )
     }

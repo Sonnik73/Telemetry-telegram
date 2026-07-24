@@ -28,7 +28,7 @@ import kotlin.String
  * @property darkThemeDimming Dimming of the background in dark themes, as a percentage; 0-100. Applied only to Wallpaper and Fill types of background.
  */
 public class ChatBackground public constructor(
-    public val background: Background,
+    public val background: Background?,
     public val darkThemeDimming: Int,
 ) {
     override fun equals(other: Any?): Boolean {
@@ -50,7 +50,7 @@ public class ChatBackground public constructor(
 
     override fun hashCode(): Int {
         var hashCode = this::class.hashCode()
-        hashCode = 31 * hashCode + background.hashCode()
+        hashCode = 31 * hashCode + (background?.hashCode() ?: 0)
         hashCode = 31 * hashCode + darkThemeDimming.hashCode()
         return hashCode
     }

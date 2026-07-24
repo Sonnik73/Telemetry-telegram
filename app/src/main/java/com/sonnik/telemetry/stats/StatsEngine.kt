@@ -129,15 +129,24 @@ class StatsEngine(private val client: TdlClient) {
 
         loop@ while (true) {
             coroutineContext.ensureActive()
-            val batch = when (val result = client.getChatHistory(chatId, fromMessageId, 0, 100, onlyLocal = false)) {
-                is TdlResult.Success -> result.result.messages.filterNotNull()
+            val rawBatch = when (val result = client.getChatHistory(chatId, fromMessageId, 0, 100, onlyLocal = false)) {
+                is TdlResult.Success -> result.result.messages
                 is TdlResult.Failure -> {
                     partial = true
                     error = "${result.code}: ${result.message}"
                     break@loop
                 }
             }
-            if (batch.isEmpty()) break
+            // An empty raw array means the end of history. A non-empty array whose
+            // entries are all null means a page of unparsable messages — advance
+            // past it using the last known id so the scan doesn't stall.
+            if (rawBatch.isEmpty()) break
+            val batch = rawBatch.filterNotNull()
+            if (batch.isEmpty()) {
+                partial = true
+                error = "пропущена страница нечитаемых сообщений"
+                break@loop
+            }
 
             for (message in batch) {
                 fromMessageId = message.id
