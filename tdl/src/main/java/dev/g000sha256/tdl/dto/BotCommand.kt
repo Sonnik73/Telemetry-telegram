@@ -1,0 +1,79 @@
+/*
+ * Copyright 2025-2026 Georgii Ippolitov (g000sha256)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package dev.g000sha256.tdl.dto
+
+import kotlin.Any
+import kotlin.Boolean
+import kotlin.Int
+import kotlin.String
+
+/**
+ * Represents a command supported by a bot.
+ *
+ * @property command Text of the bot command.
+ * @property description Description of the bot command.
+ * @property isEphemeral True, if the command must send an ephemeral message instead of a regular one.
+ */
+public class BotCommand public constructor(
+    public val command: String,
+    public val description: String,
+    public val isEphemeral: Boolean,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (other === this) {
+            return true
+        }
+        if (other == null) {
+            return false
+        }
+        if (other::class != this::class) {
+            return false
+        }
+        other as BotCommand
+        if (other.command != command) {
+            return false
+        }
+        if (other.description != description) {
+            return false
+        }
+        return other.isEphemeral == isEphemeral
+    }
+
+    override fun hashCode(): Int {
+        var hashCode = this::class.hashCode()
+        hashCode = 31 * hashCode + command.hashCode()
+        hashCode = 31 * hashCode + description.hashCode()
+        hashCode = 31 * hashCode + isEphemeral.hashCode()
+        return hashCode
+    }
+
+    override fun toString(): String {
+        return buildString {
+            append("BotCommand")
+            append("(")
+            append("command=")
+            append(command)
+            append(", ")
+            append("description=")
+            append(description)
+            append(", ")
+            append("isEphemeral=")
+            append(isEphemeral)
+            append(")")
+        }
+    }
+}

@@ -1,0 +1,79 @@
+/*
+ * Copyright 2025 Georgii Ippolitov (g000sha256)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package dev.g000sha256.tdl.dto
+
+import kotlin.Any
+import kotlin.Boolean
+import kotlin.Int
+import kotlin.String
+
+/**
+ * The link is a link to a video chat.
+ *
+ * @property photo Photo of the chat with the video chat; may be null if none.
+ * @property isLiveStream True, if the video chat is expected to be a live stream in a channel or a broadcast group.
+ * @property joinsAsSpeaker True, if the user can use the link to join the video chat without being muted by administrators.
+ */
+public class LinkPreviewTypeVideoChat public constructor(
+    public val photo: ChatPhoto?,
+    public val isLiveStream: Boolean,
+    public val joinsAsSpeaker: Boolean,
+) : LinkPreviewType() {
+    override fun equals(other: Any?): Boolean {
+        if (other === this) {
+            return true
+        }
+        if (other == null) {
+            return false
+        }
+        if (other::class != this::class) {
+            return false
+        }
+        other as LinkPreviewTypeVideoChat
+        if (other.photo != photo) {
+            return false
+        }
+        if (other.isLiveStream != isLiveStream) {
+            return false
+        }
+        return other.joinsAsSpeaker == joinsAsSpeaker
+    }
+
+    override fun hashCode(): Int {
+        var hashCode = this::class.hashCode()
+        hashCode = 31 * hashCode + photo.hashCode()
+        hashCode = 31 * hashCode + isLiveStream.hashCode()
+        hashCode = 31 * hashCode + joinsAsSpeaker.hashCode()
+        return hashCode
+    }
+
+    override fun toString(): String {
+        return buildString {
+            append("LinkPreviewTypeVideoChat")
+            append("(")
+            append("photo=")
+            append(photo)
+            append(", ")
+            append("isLiveStream=")
+            append(isLiveStream)
+            append(", ")
+            append("joinsAsSpeaker=")
+            append(joinsAsSpeaker)
+            append(")")
+        }
+    }
+}

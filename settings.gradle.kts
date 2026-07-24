@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Telemetry"
 include(":app")
+include(":tdl")

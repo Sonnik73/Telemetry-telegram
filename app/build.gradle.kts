@@ -58,6 +58,6 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.documentfile)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.tdl.coroutines)
+    implementation(project(":tdl"))
     debugImplementation(libs.androidx.ui.tooling)
 }
