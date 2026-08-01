@@ -23,6 +23,7 @@ class PresenceService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = TelemetryApp.instance
         app.presence.start()
+        app.geo.start()
         val count = app.presence.store.watchedIds().size
         startForegroundCompat(NOTIFICATION_ID, buildNotification(count))
         return START_STICKY

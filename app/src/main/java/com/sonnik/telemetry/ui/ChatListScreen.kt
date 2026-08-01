@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
@@ -50,6 +51,7 @@ fun ChatListScreen(
     onOpenAccount: () -> Unit,
     onOpenOverview: () -> Unit,
     onOpenTracker: () -> Unit,
+    onOpenGeo: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
 
@@ -81,6 +83,9 @@ fun ChatListScreen(
                     }
                     IconButton(onClick = onOpenTracker) {
                         Icon(Icons.Default.Visibility, contentDescription = "Онлайн-трекер")
+                    }
+                    IconButton(onClick = onOpenGeo) {
+                        Icon(Icons.Default.Place, contentDescription = "Геотрекинг")
                     }
                     IconButton(onClick = onOpenAccount) {
                         Icon(Icons.Default.AccountCircle, contentDescription = "Аккаунт")

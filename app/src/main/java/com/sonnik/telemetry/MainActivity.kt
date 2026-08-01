@@ -20,6 +20,8 @@ import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.OverviewScreen
+import com.sonnik.telemetry.ui.GeoScreen
+import com.sonnik.telemetry.ui.GeoMapScreen
 import com.sonnik.telemetry.ui.TrackerScreen
 import com.sonnik.telemetry.ui.TrackerStatsScreen
 import com.sonnik.telemetry.ui.theme.TelemetryTheme
@@ -52,6 +54,7 @@ private fun TelemetryNavHost() {
                 }
                 // Resume background presence tracking if any contacts are watched.
                 val app = TelemetryApp.instance
+                app.geo.start()
                 if (app.presence.store.watchedIds().isNotEmpty()) {
                     app.presence.start()
                     com.sonnik.telemetry.presence.PresenceService.start(context)
@@ -75,6 +78,7 @@ private fun TelemetryNavHost() {
                 onOpenAccount = { navController.navigate("account") },
                 onOpenOverview = { navController.navigate("overview") },
                 onOpenTracker = { navController.navigate("tracker") },
+                onOpenGeo = { navController.navigate("geo") },
             )
         }
         composable(
@@ -116,6 +120,23 @@ private fun TelemetryNavHost() {
         ) { entry ->
             val userId = entry.arguments?.getLong("userId") ?: return@composable
             TrackerStatsScreen(userId = userId, onBack = { navController.popBackStack() })
+        }
+        composable("geo") {
+            GeoScreen(
+                onBack = { navController.popBackStack() },
+                onOpenShare = { chatId, messageId -> navController.navigate("geo/$chatId/$messageId") },
+            )
+        }
+        composable(
+            route = "geo/{chatId}/{messageId}",
+            arguments = listOf(
+                navArgument("chatId") { type = NavType.LongType },
+                navArgument("messageId") { type = NavType.LongType },
+            ),
+        ) { entry ->
+            val chatId = entry.arguments?.getLong("chatId") ?: return@composable
+            val messageId = entry.arguments?.getLong("messageId") ?: return@composable
+            GeoMapScreen(chatId = chatId, messageId = messageId, onBack = { navController.popBackStack() })
         }
     }
 }

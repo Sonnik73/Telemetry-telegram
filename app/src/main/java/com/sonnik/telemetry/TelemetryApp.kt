@@ -3,6 +3,8 @@ package com.sonnik.telemetry
 import android.app.Application
 import android.util.Log
 import com.sonnik.telemetry.data.ChatRepository
+import com.sonnik.telemetry.geo.GeoStore
+import com.sonnik.telemetry.geo.GeoTracker
 import com.sonnik.telemetry.presence.PresenceStore
 import com.sonnik.telemetry.presence.PresenceTracker
 import com.sonnik.telemetry.td.TelegramClient
@@ -20,6 +22,10 @@ class TelemetryApp : Application() {
 
     val presence: PresenceTracker by lazy {
         PresenceTracker(this, telegram, PresenceStore(this))
+    }
+
+    val geo: GeoTracker by lazy {
+        GeoTracker(telegram, chats, GeoStore(this))
     }
 
     private val crashFile: File
