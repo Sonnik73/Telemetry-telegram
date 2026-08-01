@@ -84,7 +84,7 @@ class GeoTracker(
         if (content !is MessageLiveLocation) return null
         val userId = (message.senderId as? MessageSenderUser)?.userId ?: 0L
         val title = resolveTitle(message.chatId)
-        return record(message.chatId, message.messageId, userId, title, content)
+        return record(message.chatId, message.id, userId, title, content)
     }
 
     private fun record(chatId: Long, messageId: Long, userId: Long, title: String, content: MessageLiveLocation): GeoShare {
