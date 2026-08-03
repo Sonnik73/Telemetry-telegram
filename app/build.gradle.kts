@@ -18,9 +18,24 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        // A fixed, checked-in key so every CI build shares one signature and
+        // updates install over each other. Debug key only — no release secret.
+        create("shared") {
+            storeFile = file("telemetry.keystore")
+            storePassword = "telemetry"
+            keyAlias = "telemetry"
+            keyPassword = "telemetry"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("shared")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
