@@ -3,6 +3,7 @@ package com.sonnik.telemetry
 import android.app.Application
 import android.util.Log
 import com.sonnik.telemetry.data.ChatRepository
+import com.sonnik.telemetry.data.MessagesRepository
 import com.sonnik.telemetry.geo.GeoStore
 import com.sonnik.telemetry.geo.GeoTracker
 import com.sonnik.telemetry.presence.PresenceStore
@@ -19,6 +20,8 @@ class TelemetryApp : Application() {
         private set
 
     val chats: ChatRepository by lazy { ChatRepository(telegram.client) }
+
+    val messages: MessagesRepository by lazy { MessagesRepository(telegram.client) }
 
     val presence: PresenceTracker by lazy {
         PresenceTracker(this, telegram, PresenceStore(this))

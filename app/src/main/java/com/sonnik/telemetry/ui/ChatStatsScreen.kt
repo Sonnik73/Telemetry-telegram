@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -60,7 +61,7 @@ internal fun parseDateOrNull(text: String): LocalDate? =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit) {
+fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit, onOpenDialog: () -> Unit) {
     val app = TelemetryApp.instance
     val engine = remember { StatsEngine(app.telegram.client) }
     val scope = rememberCoroutineScope()
@@ -89,6 +90,9 @@ fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenDialog) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Открыть диалог")
+                    }
                     IconButton(onClick = onExport) {
                         Icon(Icons.Default.Download, contentDescription = "Экспорт")
                     }

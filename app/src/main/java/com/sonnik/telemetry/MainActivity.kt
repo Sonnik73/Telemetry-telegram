@@ -18,6 +18,7 @@ import com.sonnik.telemetry.ui.AccountScreen
 import com.sonnik.telemetry.ui.AuthScreen
 import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
+import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.GeoScreen
@@ -90,7 +91,15 @@ private fun TelemetryNavHost() {
                 chatId = chatId,
                 onBack = { navController.popBackStack() },
                 onExport = { navController.navigate("chat/$chatId/export") },
+                onOpenDialog = { navController.navigate("chat/$chatId/dialog") },
             )
+        }
+        composable(
+            route = "chat/{chatId}/dialog",
+            arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
+        ) { entry ->
+            val chatId = entry.arguments?.getLong("chatId") ?: return@composable
+            DialogScreen(chatId = chatId, onBack = { navController.popBackStack() })
         }
         composable(
             route = "chat/{chatId}/export",
