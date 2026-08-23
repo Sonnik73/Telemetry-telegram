@@ -9,14 +9,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -52,8 +51,11 @@ fun ChatListScreen(
     onOpenOverview: () -> Unit,
     onOpenTracker: () -> Unit,
     onOpenGeo: () -> Unit,
+    onOpenArchive: () -> Unit,
+    onOpenBirthdays: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
+    var menuOpen by remember { mutableStateOf(false) }
 
     var chats by remember { mutableStateOf<List<ChatSummary>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -78,17 +80,16 @@ fun ChatListScreen(
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить")
                     }
-                    IconButton(onClick = onOpenOverview) {
-                        Icon(Icons.Default.BarChart, contentDescription = "Сводка по аккаунту")
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Меню")
                     }
-                    IconButton(onClick = onOpenTracker) {
-                        Icon(Icons.Default.Visibility, contentDescription = "Онлайн-трекер")
-                    }
-                    IconButton(onClick = onOpenGeo) {
-                        Icon(Icons.Default.Place, contentDescription = "Геотрекинг")
-                    }
-                    IconButton(onClick = onOpenAccount) {
-                        Icon(Icons.Default.AccountCircle, contentDescription = "Аккаунт")
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Сводка по аккаунту") }, onClick = { menuOpen = false; onOpenOverview() })
+                        DropdownMenuItem(text = { Text("Онлайн-трекер") }, onClick = { menuOpen = false; onOpenTracker() })
+                        DropdownMenuItem(text = { Text("Геотрекинг") }, onClick = { menuOpen = false; onOpenGeo() })
+                        DropdownMenuItem(text = { Text("Архив: удалённое и правки") }, onClick = { menuOpen = false; onOpenArchive() })
+                        DropdownMenuItem(text = { Text("Дни рождения контактов") }, onClick = { menuOpen = false; onOpenBirthdays() })
+                        DropdownMenuItem(text = { Text("Аккаунт") }, onClick = { menuOpen = false; onOpenAccount() })
                     }
                 },
             )

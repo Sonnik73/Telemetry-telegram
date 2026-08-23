@@ -24,6 +24,7 @@ class PresenceService : Service() {
         val app = TelemetryApp.instance
         app.presence.start()
         app.geo.start()
+        app.intel.start()
         val count = app.presence.store.watchedIds().size
         startForegroundCompat(NOTIFICATION_ID, buildNotification(count))
         return START_STICKY

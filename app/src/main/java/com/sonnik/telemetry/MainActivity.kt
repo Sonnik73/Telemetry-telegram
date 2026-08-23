@@ -15,8 +15,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sonnik.telemetry.td.TelegramClient.AuthUiState
 import com.sonnik.telemetry.ui.AccountScreen
+import com.sonnik.telemetry.ui.ArchiveScreen
 import com.sonnik.telemetry.ui.AuthScreen
+import com.sonnik.telemetry.ui.BirthdaysScreen
 import com.sonnik.telemetry.ui.ChatListScreen
+import com.sonnik.telemetry.ui.DossierScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
@@ -56,6 +59,7 @@ private fun TelemetryNavHost() {
                 // Resume background presence tracking if any contacts are watched.
                 val app = TelemetryApp.instance
                 app.geo.start()
+                app.intel.start()
                 if (app.presence.store.watchedIds().isNotEmpty()) {
                     app.presence.start()
                     com.sonnik.telemetry.presence.PresenceService.start(context)
@@ -80,6 +84,8 @@ private fun TelemetryNavHost() {
                 onOpenOverview = { navController.navigate("overview") },
                 onOpenTracker = { navController.navigate("tracker") },
                 onOpenGeo = { navController.navigate("geo") },
+                onOpenArchive = { navController.navigate("archive") },
+                onOpenBirthdays = { navController.navigate("birthdays") },
             )
         }
         composable(
@@ -128,7 +134,27 @@ private fun TelemetryNavHost() {
             arguments = listOf(navArgument("userId") { type = NavType.LongType }),
         ) { entry ->
             val userId = entry.arguments?.getLong("userId") ?: return@composable
-            TrackerStatsScreen(userId = userId, onBack = { navController.popBackStack() })
+            TrackerStatsScreen(
+                userId = userId,
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { navController.navigate("dossier/$userId") },
+            )
+        }
+        composable("archive") {
+            ArchiveScreen(onBack = { navController.popBackStack() })
+        }
+        composable("birthdays") {
+            BirthdaysScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
+            )
+        }
+        composable(
+            route = "dossier/{userId}",
+            arguments = listOf(navArgument("userId") { type = NavType.LongType }),
+        ) { entry ->
+            val userId = entry.arguments?.getLong("userId") ?: return@composable
+            DossierScreen(userId = userId, onBack = { navController.popBackStack() })
         }
         composable("geo") {
             GeoScreen(

@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,7 +53,7 @@ private data class TrackerStats(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TrackerStatsScreen(userId: Long, onBack: () -> Unit) {
+fun TrackerStatsScreen(userId: Long, onBack: () -> Unit, onOpenDossier: () -> Unit) {
     val app = TelemetryApp.instance
     var stats by remember { mutableStateOf<TrackerStats?>(null) }
 
@@ -67,6 +68,11 @@ fun TrackerStatsScreen(userId: Long, onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onOpenDossier) {
+                        Icon(Icons.Default.Badge, contentDescription = "Досье")
                     }
                 },
             )
