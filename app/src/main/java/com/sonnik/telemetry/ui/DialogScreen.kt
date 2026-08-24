@@ -224,8 +224,16 @@ private fun MessageBubble(msg: Message) {
                 .widthIn(max = 300.dp)
                 .background(bubbleColor, RoundedCornerShape(12.dp))
                 .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(bodyOf(msg), style = MaterialTheme.typography.bodyMedium)
+            val att = mediaAttachment(msg.content)
+            if (att != null) {
+                MediaView(att)
+                val caption = captionOf(msg)
+                if (caption.isNotBlank()) Text(caption, style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(bodyOf(msg), style = MaterialTheme.typography.bodyMedium)
+            }
             Text(
                 formatDateTime(msg.date),
                 style = MaterialTheme.typography.labelSmall,
@@ -234,6 +242,16 @@ private fun MessageBubble(msg: Message) {
             )
         }
     }
+}
+
+private fun captionOf(msg: Message): String = when (val c = msg.content) {
+    is MessagePhoto -> c.caption.text
+    is MessageVideo -> c.caption.text
+    is MessageAnimation -> c.caption.text
+    is MessageDocument -> c.caption.text
+    is MessageAudio -> c.caption.text
+    is MessageVoiceNote -> c.caption.text
+    else -> ""
 }
 
 private fun bodyOf(msg: Message): String = when (val c = msg.content) {

@@ -46,6 +46,16 @@ class MessagesRepository(private val client: TdlClient) {
         }
     }
 
+    /** Downloads a file synchronously and returns its local path, or null on failure. */
+    suspend fun localPath(fileId: Int): String? {
+        val downloaded = when (val result = client.downloadFile(fileId, priority = 1, offset = 0, limit = 0, synchronous = true)) {
+            is TdlResult.Success -> result.result
+            is TdlResult.Failure -> return null
+        }
+        val path = downloaded.local.path
+        return if (downloaded.local.isDownloadingCompleted && path.isNotEmpty()) path else null
+    }
+
     /** Marks messages read (visible to the sender). Only call in the non-stealth path. */
     suspend fun markRead(chatId: Long, messageIds: LongArray) {
         if (messageIds.isEmpty()) return
