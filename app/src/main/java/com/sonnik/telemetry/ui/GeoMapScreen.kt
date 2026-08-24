@@ -2,6 +2,8 @@ package com.sonnik.telemetry.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,14 +16,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -29,7 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,7 +42,10 @@ import com.sonnik.telemetry.geo.GeoPoint
 import com.sonnik.telemetry.geo.GeoShare
 import com.sonnik.telemetry.geo.OsmTileMap
 import com.sonnik.telemetry.geo.TrackStats
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,9 +55,9 @@ fun GeoMapScreen(chatId: Long, messageId: Long, onBack: () -> Unit) {
     val active by app.geo.active.collectAsState()
     val share: GeoShare? = active.firstOrNull { it.chatId == chatId && it.messageId == messageId }
 
-    var zoom by remember { mutableIntStateOf(15) }
     var track by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
     var stats by remember { mutableStateOf<TrackStats?>(null) }
+    var exportStatus by remember { mutableStateOf<String?>(null) }
 
     // Refresh the recorded track whenever a new point lands (share.updatedAt bumps).
     LaunchedEffect(share?.updatedAt) {
@@ -67,6 +70,20 @@ fun GeoMapScreen(chatId: Long, messageId: Long, onBack: () -> Unit) {
     val lon = share?.lon ?: track.lastOrNull()?.lon ?: 0.0
     val heading = share?.heading ?: track.lastOrNull()?.heading ?: 0
     val accuracy = share?.accuracy ?: track.lastOrNull()?.accuracy ?: 0.0
+
+    val saveGpx = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/gpx+xml"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        exportStatus = try {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(buildGpx(share?.title ?: "route", track).toByteArray(Charsets.UTF_8))
+            }
+            "Маршрут сохранён (${track.size} точек)"
+        } catch (e: Exception) {
+            "Ошибка сохранения: ${e.message}"
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -95,9 +112,9 @@ fun GeoMapScreen(chatId: Long, messageId: Long, onBack: () -> Unit) {
             ) {
                 if (lat != 0.0 || lon != 0.0) {
                     OsmTileMap(
-                        centerLat = lat,
-                        centerLon = lon,
-                        zoom = zoom,
+                        targetLat = lat,
+                        targetLon = lon,
+                        initialZoom = 15,
                         track = track,
                         headingDeg = heading,
                         accuracyMeters = accuracy,
@@ -107,20 +124,12 @@ fun GeoMapScreen(chatId: Long, messageId: Long, onBack: () -> Unit) {
                         Text("Ждём первую точку…")
                     }
                 }
-                Column(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    IconButton(onClick = { zoom = (zoom + 1).coerceAtMost(19) }) {
-                        Icon(Icons.Default.Add, contentDescription = "Приблизить")
-                    }
-                    IconButton(onClick = { zoom = (zoom - 1).coerceAtLeast(3) }) {
-                        Icon(Icons.Default.Remove, contentDescription = "Отдалить")
-                    }
-                }
             }
+            Text(
+                "Карту можно двигать пальцем и масштабировать щипком. Кнопка ⌖ — вернуться к точке.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             val live = share != null
             Text(
@@ -145,14 +154,31 @@ fun GeoMapScreen(chatId: Long, messageId: Long, onBack: () -> Unit) {
                 }
             }
 
-            FilledTonalButton(
-                onClick = {
-                    val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon")
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Открыть в картах")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(
+                    onClick = {
+                        val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon")
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("В картах")
+                }
+                OutlinedButton(
+                    onClick = {
+                        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                        val safe = (share?.title ?: "route").replace(Regex("[^\\p{L}\\p{N}_-]"), "_")
+                        saveGpx.launch("${safe}_$stamp.gpx")
+                    },
+                    enabled = track.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Сохранить маршрут")
+                }
+            }
+
+            exportStatus?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -163,6 +189,24 @@ private fun StatLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Builds a standard GPX 1.1 track from recorded points (opens in any maps app). */
+private fun buildGpx(name: String, track: List<GeoPoint>): String {
+    val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+    val safeName = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return buildString {
+        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        append("<gpx version=\"1.1\" creator=\"Telemetry\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        append("  <trk><name>").append(safeName).append("</name><trkseg>\n")
+        for (p in track) {
+            append("    <trkpt lat=\"").append(p.lat).append("\" lon=\"").append(p.lon).append("\">")
+            append("<time>").append(iso.format(Date(p.at * 1000))).append("</time></trkpt>\n")
+        }
+        append("  </trkseg></trk>\n</gpx>\n")
     }
 }
 
