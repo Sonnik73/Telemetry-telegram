@@ -24,6 +24,7 @@ import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.GalleryScreen
+import com.sonnik.telemetry.ui.GlobalSearchScreen
 import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.GeoScreen
 import com.sonnik.telemetry.ui.GeoMapScreen
@@ -87,6 +88,7 @@ private fun TelemetryNavHost() {
                 onOpenGeo = { navController.navigate("geo") },
                 onOpenArchive = { navController.navigate("archive") },
                 onOpenBirthdays = { navController.navigate("birthdays") },
+                onOpenSearch = { navController.navigate("search") },
             )
         }
         composable(
@@ -125,6 +127,12 @@ private fun TelemetryNavHost() {
         }
         composable("account") {
             AccountScreen(onBack = { navController.popBackStack() })
+        }
+        composable("search") {
+            GlobalSearchScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId/dialog") },
+            )
         }
         composable("overview") {
             OverviewScreen(

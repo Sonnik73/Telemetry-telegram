@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +54,7 @@ fun ChatListScreen(
     onOpenGeo: () -> Unit,
     onOpenArchive: () -> Unit,
     onOpenBirthdays: () -> Unit,
+    onOpenSearch: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
     var menuOpen by remember { mutableStateOf(false) }
@@ -77,6 +79,9 @@ fun ChatListScreen(
             TopAppBar(
                 title = { Text("Чаты") },
                 actions = {
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Default.Search, contentDescription = "Поиск по всем чатам")
+                    }
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить")
                     }

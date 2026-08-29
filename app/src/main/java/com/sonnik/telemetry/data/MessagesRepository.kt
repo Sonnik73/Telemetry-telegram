@@ -62,6 +62,26 @@ class MessagesRepository(private val client: TdlClient) {
         }
     }
 
+    /**
+     * Global full-text search across all chats (server-side), newest-first.
+     * Returns the page and the opaque offset for the next page ("" = no more).
+     */
+    suspend fun searchGlobal(query: String, offset: String, limit: Int): Result<Pair<List<Message>, String>> {
+        return when (
+            val result = client.searchMessages(
+                query = query,
+                offset = offset,
+                limit = limit,
+                minDate = 0,
+                maxDate = 0,
+            )
+        ) {
+            is TdlResult.Success ->
+                Result.success(result.result.messages.filterNotNull() to result.result.nextOffset)
+            is TdlResult.Failure -> Result.failure(Exception("${result.code}: ${result.message}"))
+        }
+    }
+
     suspend fun sendText(chatId: Long, text: String): Result<Message> {
         val content = InputMessageText(
             text = FormattedText(text = text, entities = emptyArray<TextEntity>()),
