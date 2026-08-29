@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Cake
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.QueryStats
@@ -66,6 +67,7 @@ fun ChatListScreen(
     onOpenArchive: () -> Unit,
     onOpenBirthdays: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenKeywords: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -134,6 +136,13 @@ fun ChatListScreen(
                     label = { Text("Дни рождения контактов") },
                     selected = false,
                     onClick = { go(onOpenBirthdays) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.NotificationsActive, contentDescription = null) },
+                    label = { Text("Отслеживание слов") },
+                    selected = false,
+                    onClick = { go(onOpenKeywords) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 )
                 NavigationDrawerItem(

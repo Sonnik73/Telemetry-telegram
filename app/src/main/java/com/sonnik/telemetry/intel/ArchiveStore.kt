@@ -16,6 +16,16 @@ data class ArchiveEvent(
     val newBody: String,
 )
 
+/** A new message that matched one of the tracked keywords. */
+data class KeywordHit(
+    val chatId: Long,
+    val messageId: Long,
+    val senderId: Long,
+    val at: Long,
+    val keyword: String,
+    val body: String,
+)
+
 /** A recorded change of a contact's profile field. */
 data class ContactChange(
     val userId: Long,
@@ -86,6 +96,42 @@ class ArchiveStore(context: Context) :
             put("new_body", event.newBody)
         }
         writableDatabase.insert("events", null, values)
+    }
+
+    /** Lazily creates the keyword-hits table (works on already-created databases too). */
+    private fun ensureKeywordTable() {
+        writableDatabase.execSQL(
+            "CREATE TABLE IF NOT EXISTS keyword_hits (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, " +
+                "at INTEGER NOT NULL, keyword TEXT NOT NULL, body TEXT NOT NULL)",
+        )
+    }
+
+    fun recordKeywordHit(hit: KeywordHit) {
+        ensureKeywordTable()
+        val values = ContentValues().apply {
+            put("chat_id", hit.chatId)
+            put("message_id", hit.messageId)
+            put("sender_id", hit.senderId)
+            put("at", hit.at)
+            put("keyword", hit.keyword)
+            put("body", hit.body)
+        }
+        writableDatabase.insert("keyword_hits", null, values)
+    }
+
+    fun keywordHits(limit: Int): List<KeywordHit> {
+        ensureKeywordTable()
+        val result = ArrayList<KeywordHit>()
+        readableDatabase.rawQuery(
+            "SELECT chat_id, message_id, sender_id, at, keyword, body FROM keyword_hits ORDER BY at DESC LIMIT $limit",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += KeywordHit(c.getLong(0), c.getLong(1), c.getLong(2), c.getLong(3), c.getString(4), c.getString(5))
+            }
+        }
+        return result
     }
 
     fun events(limit: Int, userId: Long? = null): List<ArchiveEvent> {

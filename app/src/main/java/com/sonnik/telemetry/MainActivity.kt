@@ -26,6 +26,7 @@ import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.GalleryScreen
 import com.sonnik.telemetry.ui.GlobalSearchScreen
+import com.sonnik.telemetry.ui.KeywordsScreen
 import com.sonnik.telemetry.ui.LockScreen
 import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.GeoScreen
@@ -79,7 +80,10 @@ private fun TelemetryNavHost() {
                 app.geo.start()
                 app.intel.start()
                 app.mediaAuto.start()
-                if (app.presence.store.watchedIds().isNotEmpty() || app.mediaAuto.store.anyEnabled()) {
+                if (app.presence.store.watchedIds().isNotEmpty() ||
+                    app.mediaAuto.store.anyEnabled() ||
+                    app.intel.keywords().isNotEmpty()
+                ) {
                     app.presence.start()
                     com.sonnik.telemetry.presence.PresenceService.start(context)
                 }
@@ -106,6 +110,7 @@ private fun TelemetryNavHost() {
                 onOpenArchive = { navController.navigate("archive") },
                 onOpenBirthdays = { navController.navigate("birthdays") },
                 onOpenSearch = { navController.navigate("search") },
+                onOpenKeywords = { navController.navigate("keywords") },
             )
         }
         composable(
@@ -147,6 +152,12 @@ private fun TelemetryNavHost() {
         }
         composable("search") {
             GlobalSearchScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId/dialog") },
+            )
+        }
+        composable("keywords") {
+            KeywordsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenChat = { chatId -> navController.navigate("chat/$chatId/dialog") },
             )

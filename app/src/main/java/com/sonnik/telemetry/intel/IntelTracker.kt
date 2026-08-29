@@ -61,15 +61,40 @@ class IntelTracker(
         prefs.edit().putBoolean(KEY_ALERTS, enabled).apply()
     }
 
+    @Volatile
+    private var keywordCache: List<String> = emptyList()
+
+    /** Keywords tracked in incoming messages across all chats/channels. */
+    fun keywords(): List<String> =
+        prefs.getStringSet(KEY_KEYWORDS, emptySet())!!.toList().sortedBy { it.lowercase() }
+
+    fun addKeyword(word: String) {
+        val w = word.trim()
+        if (w.isEmpty()) return
+        val set = prefs.getStringSet(KEY_KEYWORDS, emptySet())!!.toMutableSet()
+        set.add(w)
+        prefs.edit().putStringSet(KEY_KEYWORDS, set).apply()
+        keywordCache = keywords()
+    }
+
+    fun removeKeyword(word: String) {
+        val set = prefs.getStringSet(KEY_KEYWORDS, emptySet())!!.toMutableSet()
+        set.remove(word)
+        prefs.edit().putStringSet(KEY_KEYWORDS, set).apply()
+        keywordCache = keywords()
+    }
+
     fun start() {
         if (started) return
         started = true
+        keywordCache = keywords()
         ensureChannel()
 
         scope.launch {
             telegram.client.newMessageUpdates.collect { update ->
                 val m = update.message
                 store.cache(m.chatId, m.id, senderId(m), m.date, messageBody(m.content))
+                matchKeywords(m)
             }
         }
         scope.launch {
@@ -171,10 +196,74 @@ class IntelTracker(
         }
     }
 
+    /** Checks a new message against tracked keywords; records and notifies on a match. */
+    private suspend fun matchKeywords(m: Message) {
+        if (keywordCache.isEmpty()) return
+        val text = rawText(m.content)
+        if (text.isBlank()) return
+        val hit = keywordCache.firstOrNull { text.contains(it, ignoreCase = true) } ?: return
+        val snippet = messageBody(m.content)
+        store.recordKeywordHit(
+            KeywordHit(
+                chatId = m.chatId,
+                messageId = m.id,
+                senderId = senderId(m),
+                at = System.currentTimeMillis() / 1000,
+                keyword = hit,
+                body = snippet,
+            ),
+        )
+        bump()
+        notifyKeyword(hit, senderId(m), m.chatId, snippet)
+    }
+
+    private fun rawText(content: MessageContent): String = when (content) {
+        is MessageText -> content.text.text
+        is MessagePhoto -> content.caption.text
+        is MessageVideo -> content.caption.text
+        is MessageDocument -> content.caption.text
+        is MessageAudio -> content.caption.text
+        is MessageVoiceNote -> content.caption.text
+        is MessageAnimation -> content.caption.text
+        else -> ""
+    }
+
+    private suspend fun notifyKeyword(keyword: String, senderId: Long, chatId: Long, snippet: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val chats = TelemetryApp.instance.chats
+        val sender = runCatching {
+            chats.senderName(
+                if (senderId > 0) dev.g000sha256.tdl.dto.MessageSenderUser(senderId)
+                else dev.g000sha256.tdl.dto.MessageSenderChat(senderId),
+            )
+        }.getOrNull() ?: ""
+        val chatName = runCatching { chats.getChat(chatId)?.title }.getOrNull()
+        val where = listOfNotNull(chatName, sender.ifBlank { null }).joinToString(" · ")
+        val notification = NotificationCompat.Builder(context, CHANNEL_KEYWORD)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("🔎 «$keyword»" + if (where.isNotEmpty()) " — $where" else "")
+            .setContentText(snippet)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(snippet))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context).notify(nextNotificationId(), notification)
+        }
+    }
+
     private fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_INTEL, "Удаления и правки", NotificationManager.IMPORTANCE_HIGH),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_KEYWORD, "Ключевые слова", NotificationManager.IMPORTANCE_HIGH),
         )
     }
 
@@ -182,7 +271,9 @@ class IntelTracker(
 
     private companion object {
         const val KEY_ALERTS = "intel_alerts"
+        const val KEY_KEYWORDS = "intel_keywords"
         const val CHANNEL_INTEL = "intel_alerts"
+        const val CHANNEL_KEYWORD = "keyword_alerts"
     }
 }
 
