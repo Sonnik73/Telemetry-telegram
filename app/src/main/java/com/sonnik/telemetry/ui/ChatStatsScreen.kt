@@ -1,5 +1,7 @@
 package com.sonnik.telemetry.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -340,4 +342,72 @@ private fun DeepStatsCards(stats: DeepStats) {
             }
         }
     }
+
+    if (stats.topWords.isNotEmpty()) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Топ слов", style = MaterialTheme.typography.titleMedium)
+                stats.topWords.take(20).forEachIndexed { index, w ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${index + 1}. ${w.text}")
+                        Text(formatCount(w.count))
+                    }
+                }
+            }
+        }
+    }
+
+    if (stats.topEmoji.isNotEmpty()) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Топ эмодзи", style = MaterialTheme.typography.titleMedium)
+                stats.topEmoji.take(20).forEach { e ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(e.text, style = MaterialTheme.typography.titleMedium)
+                        Text(formatCount(e.count))
+                    }
+                }
+            }
+        }
+    }
+
+    CsvExportButton(stats)
+}
+
+@Composable
+private fun CsvExportButton(stats: DeepStats) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var status by remember { mutableStateOf<String?>(null) }
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        status = runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { it.write(buildStatsCsv(stats).toByteArray(Charsets.UTF_8)) }
+        }.fold({ "Статистика сохранена в CSV" }, { "Ошибка: ${it.message}" })
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedButton(onClick = { launcher.launch("stats.csv") }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Download, contentDescription = null)
+            Text("  Экспорт статистики в CSV")
+        }
+        status?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+    }
+}
+
+/** Builds a UTF-8 CSV summarizing the deep-scan statistics. */
+private fun buildStatsCsv(stats: DeepStats): String {
+    fun esc(s: String): String = "\"" + s.replace("\"", "\"\"") + "\""
+    val sb = StringBuilder()
+    sb.append("section,label,value\n")
+    sb.append("итого,просканировано сообщений,${stats.scannedMessages}\n")
+    sb.append("итого,текстовых сообщений,${stats.textMessages}\n")
+    sb.append("итого,символов текста,${stats.textCharacters}\n")
+    sb.append("итого,объём медиа (байт),${stats.totalMediaBytes}\n")
+    stats.media.forEach { (name, b) -> sb.append("медиа,${esc(name)},${b.count};${b.bytes}\n") }
+    stats.topSenders.forEach { sb.append("участник,${esc(it.name)},${it.messages}\n") }
+    stats.topWords.forEach { sb.append("слово,${esc(it.text)},${it.count}\n") }
+    stats.topEmoji.forEach { sb.append("эмодзи,${esc(it.text)},${it.count}\n") }
+    stats.perDay.toSortedMap().forEach { (day, n) -> sb.append("день,$day,$n\n") }
+    return sb.toString()
 }

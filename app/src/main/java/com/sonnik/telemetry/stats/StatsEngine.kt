@@ -55,6 +55,8 @@ data class MediaBucket(val count: Int = 0, val bytes: Long = 0) {
 
 data class SenderStat(val name: String, val messages: Int)
 
+data class WordStat(val text: String, val count: Int)
+
 data class DeepStats(
     val scannedMessages: Int,
     val textMessages: Int,
@@ -63,6 +65,8 @@ data class DeepStats(
     val totalMediaBytes: Long,
     val totalMediaCount: Int,
     val topSenders: List<SenderStat>,
+    val topWords: List<WordStat>,
+    val topEmoji: List<WordStat>,
     val perDay: Map<LocalDate, Int>,
     val firstMessageDate: Int,
     val lastMessageDate: Int,
@@ -118,6 +122,8 @@ class StatsEngine(private val client: TdlClient) {
         val senderMessages = HashMap<String, Int>()
         val senderIds = HashMap<String, MessageSender>()
         val perDay = LinkedHashMap<LocalDate, Int>()
+        val wordCounts = HashMap<String, Int>()
+        val emojiCounts = HashMap<String, Int>()
         var scanned = 0
         var textMessages = 0
         var textCharacters = 0L
@@ -182,6 +188,8 @@ class StatsEngine(private val client: TdlClient) {
                         else -> Unit
                     }
 
+                    tallyText(textOf(content), wordCounts, emojiCounts)
+
                     onMessage(message)
                 } catch (e: CancellationException) {
                     throw e
@@ -197,6 +205,15 @@ class StatsEngine(private val client: TdlClient) {
             .take(10)
             .map { SenderStat(name = it.key, messages = it.value) }
 
+        val topWords = wordCounts.entries
+            .sortedByDescending { it.value }
+            .take(30)
+            .map { WordStat(it.key, it.value) }
+        val topEmoji = emojiCounts.entries
+            .sortedByDescending { it.value }
+            .take(30)
+            .map { WordStat(it.key, it.value) }
+
         return@withContext DeepStats(
             scannedMessages = scanned,
             textMessages = textMessages,
@@ -205,6 +222,8 @@ class StatsEngine(private val client: TdlClient) {
             totalMediaBytes = media.values.sumOf { it.bytes },
             totalMediaCount = media.values.sumOf { it.count },
             topSenders = topSenders,
+            topWords = topWords,
+            topEmoji = topEmoji,
             perDay = perDay,
             firstMessageDate = firstDate,
             lastMessageDate = lastDate,
@@ -242,3 +261,56 @@ private fun File.sizeOrExpected(): Long = if (size > 0) size else expectedSize
 private fun MutableMap<String, MediaBucket>.add(category: String, bytes: Long) {
     this[category] = (this[category] ?: MediaBucket()) + bytes
 }
+
+/** Extracts the text or caption of a message for word/emoji tallying. */
+private fun textOf(content: dev.g000sha256.tdl.dto.MessageContent): String = when (content) {
+    is MessageText -> content.text.text
+    is MessagePhoto -> content.caption.text
+    is MessageVideo -> content.caption.text
+    is MessageDocument -> content.caption.text
+    is MessageAudio -> content.caption.text
+    is MessageVoiceNote -> content.caption.text
+    is MessageAnimation -> content.caption.text
+    else -> ""
+}
+
+/** Counts non-trivial words (>=3 letters, not a stopword) and emoji in [text]. */
+private fun tallyText(text: String, words: MutableMap<String, Int>, emoji: MutableMap<String, Int>) {
+    if (text.isEmpty()) return
+    // Emoji: scan by code point.
+    var i = 0
+    while (i < text.length) {
+        val cp = text.codePointAt(i)
+        if (isEmoji(cp)) {
+            val s = String(Character.toChars(cp))
+            emoji.merge(s, 1, Int::plus)
+        }
+        i += Character.charCount(cp)
+    }
+    // Words: split on anything that isn't a letter or digit.
+    for (raw in text.split(WORD_SPLIT)) {
+        val w = raw.lowercase()
+        if (w.length >= 3 && w !in STOPWORDS && w.any { it.isLetter() }) {
+            words.merge(w, 1, Int::plus)
+        }
+    }
+}
+
+private fun isEmoji(cp: Int): Boolean =
+    (cp in 0x1F300..0x1FAFF) || // symbols, emoticons, transport, supplemental
+        (cp in 0x2600..0x27BF) || // misc symbols + dingbats
+        (cp in 0x1F000..0x1F0FF) || // mahjong/dominoes/cards
+        cp == 0x2764 || // heart
+        (cp in 0x1F1E6..0x1F1FF) // regional indicators (flags)
+
+private val WORD_SPLIT = Regex("[^\\p{L}\\p{N}]+")
+
+private val STOPWORDS = setOf(
+    // Russian
+    "что", "как", "это", "так", "вот", "был", "она", "они", "оно", "его", "нет",
+    "да", "же", "бы", "ли", "или", "уже", "все", "всё", "там", "тут", "как-то",
+    "если", "тоже", "меня", "тебя", "него", "неё", "них", "мне", "тебе", "нам",
+    "вам", "для", "под", "над", "при", "про", "без", "the", "and", "you", "that",
+    "for", "are", "was", "but", "not", "this", "with", "have", "your", "can",
+    "все", "чтобы", "когда", "потом", "очень", "может", "надо", "быть", "есть",
+)
