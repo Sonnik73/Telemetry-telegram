@@ -23,6 +23,10 @@ androidx-material-icons-extended = { group = "androidx.compose.material", name =
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.0.1" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version = "1.1.0" }
+# biometric 1.1.0 pulls fragment 1.2.5, whose FragmentActivity rejects the
+# Activity Result API's >16-bit request codes ("Can only use lower 16 bits").
+# Force a modern fragment that routes results through the activity registry.
+androidx-fragment = { group = "androidx.fragment", name = "fragment", version = "1.8.5" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.11.0" }
 kotlinx-atomicfu = { group = "org.jetbrains.kotlinx", name = "atomicfu", version = "0.33.0" }
