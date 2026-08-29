@@ -29,6 +29,7 @@ import com.sonnik.telemetry.ui.GlobalSearchScreen
 import com.sonnik.telemetry.ui.KeywordsScreen
 import com.sonnik.telemetry.ui.LockScreen
 import com.sonnik.telemetry.ui.OverviewScreen
+import com.sonnik.telemetry.ui.SettingsScreen
 import com.sonnik.telemetry.ui.GeoScreen
 import com.sonnik.telemetry.ui.GeoMapScreen
 import com.sonnik.telemetry.ui.TrackerScreen
@@ -111,6 +112,7 @@ private fun TelemetryNavHost() {
                 onOpenBirthdays = { navController.navigate("birthdays") },
                 onOpenSearch = { navController.navigate("search") },
                 onOpenKeywords = { navController.navigate("keywords") },
+                onOpenSettings = { navController.navigate("settings") },
             )
         }
         composable(
@@ -149,6 +151,9 @@ private fun TelemetryNavHost() {
         }
         composable("account") {
             AccountScreen(onBack = { navController.popBackStack() })
+        }
+        composable("settings") {
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
         composable("search") {
             GlobalSearchScreen(

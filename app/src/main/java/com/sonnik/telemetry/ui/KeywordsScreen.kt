@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +59,26 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     val senderNames = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    val exportCsv = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                val sb = StringBuilder("keyword,chat,sender,date,text\n")
+                fun esc(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
+                hits.forEach { h ->
+                    sb.append(esc(h.keyword)).append(",")
+                        .append(esc(chatNames.value[h.chatId] ?: h.chatId.toString())).append(",")
+                        .append(esc(senderNames.value[h.senderId] ?: "")).append(",")
+                        .append(esc(formatDateTime(h.at.toInt()))).append(",")
+                        .append(esc(h.body)).append("\n")
+                }
+                out.write(sb.toString().toByteArray(Charsets.UTF_8))
+            }
+        }
+    }
 
     fun ensureBackground() {
         app.intel.start()
@@ -106,6 +127,9 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { if (hits.isNotEmpty()) exportCsv.launch("keywords.csv") }, enabled = hits.isNotEmpty()) {
+                        Icon(Icons.Default.Download, contentDescription = "Экспорт в CSV")
+                    }
                     InfoButton(
                         "Отслеживание ключевых слов",
                         listOf(

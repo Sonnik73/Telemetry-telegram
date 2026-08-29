@@ -19,7 +19,11 @@ private val DarkColors = darkColorScheme(primary = TelegramBlueDark)
 
 @Composable
 fun TelemetryTheme(content: @Composable () -> Unit) {
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = when (ThemeController.mode.intValue) {
+        ThemeController.LIGHT -> false
+        ThemeController.DARK -> true
+        else -> isSystemInDarkTheme()
+    }
     val colorScheme = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current

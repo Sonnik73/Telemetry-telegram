@@ -52,6 +52,7 @@ class TelemetryApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.sonnik.telemetry.ui.theme.ThemeController.load(this)
         installCrashRecorder()
         telegram = TelegramClient(this)
     }

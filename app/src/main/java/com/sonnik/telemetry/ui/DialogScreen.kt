@@ -1,5 +1,8 @@
 package com.sonnik.telemetry.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,9 +51,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dev.g000sha256.tdl.dto.Message
 import dev.g000sha256.tdl.dto.MessageAnimation
 import dev.g000sha256.tdl.dto.MessageAudio
@@ -80,6 +88,19 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
     var loadingMore by remember { mutableStateOf(false) }
     var reachedTop by remember { mutableStateOf(false) }
     var primed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val attachLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        sending = true
+        scope.launch {
+            val path = withContext(Dispatchers.IO) { copyToCache(context, uri) }
+            if (path != null) repo.sendFile(chatId, path)
+            sending = false
+        }
+    }
 
     fun sortedInsert(msg: Message) {
         if (messages.any { it.id == msg.id }) return
@@ -231,6 +252,9 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    IconButton(enabled = !sending, onClick = { attachLauncher.launch("*/*") }) {
+                        Icon(Icons.Default.AttachFile, contentDescription = "Прикрепить файл")
+                    }
                     OutlinedTextField(
                         value = input,
                         onValueChange = { input = it },
@@ -257,6 +281,26 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
         }
     }
 }
+
+/** Copies a picked content:// file into the app cache and returns its path (TDLib needs a real path). */
+private fun copyToCache(context: android.content.Context, uri: Uri): String? = runCatching {
+    val name = queryDisplayName(context, uri) ?: "file_${System.currentTimeMillis()}"
+    val safe = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    val dir = File(context.cacheDir, "outgoing").apply { mkdirs() }
+    val out = File(dir, "${System.currentTimeMillis()}_$safe")
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        out.outputStream().use { input.copyTo(it) }
+    } ?: return null
+    out.absolutePath
+}.getOrNull()
+
+private fun queryDisplayName(context: android.content.Context, uri: Uri): String? =
+    runCatching {
+        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+        }
+    }.getOrNull()
 
 @Composable
 private fun MessageBubble(msg: Message) {

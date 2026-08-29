@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
@@ -80,6 +81,28 @@ fun ArchiveScreen(onBack: () -> Unit) {
         }
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val exportCsv = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                val sb = StringBuilder("kind,chat,sender,date,old,new\n")
+                fun esc(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
+                events.forEach { e ->
+                    sb.append(e.kind).append(",")
+                        .append(esc(chatNames.value[e.chatId] ?: e.chatId.toString())).append(",")
+                        .append(esc(names.value[e.senderId] ?: "")).append(",")
+                        .append(esc(formatDateTime(e.at.toInt()))).append(",")
+                        .append(esc(e.oldBody)).append(",")
+                        .append(esc(e.newBody)).append("\n")
+                }
+                out.write(sb.toString().toByteArray(Charsets.UTF_8))
+            }
+        }
+    }
+
     LaunchedEffect(changed) {
         val list = app.intel.store.events(limit = 1000)
         events = list
@@ -138,6 +161,9 @@ fun ArchiveScreen(onBack: () -> Unit) {
                             "Работает, пока запущен трекер (фоновый сервис).",
                         ),
                     )
+                    IconButton(onClick = { if (events.isNotEmpty()) exportCsv.launch("archive.csv") }, enabled = events.isNotEmpty()) {
+                        Icon(Icons.Default.Download, contentDescription = "Экспорт в CSV")
+                    }
                     IconButton(onClick = { toggleAlerts(!alerts) }) {
                         Icon(
                             if (alerts) Icons.Default.Notifications else Icons.Default.NotificationsOff,

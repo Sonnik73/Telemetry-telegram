@@ -3,6 +3,9 @@ package com.sonnik.telemetry.data
 import dev.g000sha256.tdl.TdlClient
 import dev.g000sha256.tdl.TdlResult
 import dev.g000sha256.tdl.dto.FormattedText
+import dev.g000sha256.tdl.dto.InputDocument
+import dev.g000sha256.tdl.dto.InputFileLocal
+import dev.g000sha256.tdl.dto.InputMessageDocument
 import dev.g000sha256.tdl.dto.InputMessageText
 import dev.g000sha256.tdl.dto.Message
 import dev.g000sha256.tdl.dto.SearchMessagesFilter
@@ -115,6 +118,21 @@ class MessagesRepository(private val client: TdlClient) {
             text = FormattedText(text = text, entities = emptyArray<TextEntity>()),
             linkPreviewOptions = null,
             clearDraft = true,
+        )
+        return when (val result = client.sendMessage(chatId = chatId, inputMessageContent = content)) {
+            is TdlResult.Success -> Result.success(result.result)
+            is TdlResult.Failure -> Result.failure(Exception("${result.code}: ${result.message}"))
+        }
+    }
+
+    /**
+     * Sends a local file as a document (Telegram auto-detects images/video/etc.).
+     * [path] must be a real filesystem path, so copy content:// picks to cache first.
+     */
+    suspend fun sendFile(chatId: Long, path: String, caption: String = ""): Result<Message> {
+        val content = InputMessageDocument(
+            document = InputDocument(InputFileLocal(path), thumbnail = null, disableContentTypeDetection = false),
+            caption = if (caption.isBlank()) null else FormattedText(caption, emptyArray<TextEntity>()),
         )
         return when (val result = client.sendMessage(chatId = chatId, inputMessageContent = content)) {
             is TdlResult.Success -> Result.success(result.result)
