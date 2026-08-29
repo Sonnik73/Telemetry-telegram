@@ -10,6 +10,7 @@ import com.sonnik.telemetry.intel.ArchiveStore
 import com.sonnik.telemetry.intel.IntelTracker
 import com.sonnik.telemetry.presence.PresenceStore
 import com.sonnik.telemetry.presence.PresenceTracker
+import com.sonnik.telemetry.security.AppLock
 import com.sonnik.telemetry.td.TelegramClient
 import java.io.File
 import java.text.SimpleDateFormat
@@ -36,6 +37,8 @@ class TelemetryApp : Application() {
     val intel: IntelTracker by lazy {
         IntelTracker(this, telegram, ArchiveStore(this))
     }
+
+    val lock: AppLock by lazy { AppLock(this) }
 
     private val crashFile: File
         get() = File(filesDir, "last_crash.txt")

@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
     implementation(project(":tdl"))
     debugImplementation(libs.androidx.ui.tooling)

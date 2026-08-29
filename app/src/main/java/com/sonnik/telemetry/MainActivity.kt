@@ -1,13 +1,14 @@
 package com.sonnik.telemetry
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -25,6 +26,7 @@ import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.GalleryScreen
 import com.sonnik.telemetry.ui.GlobalSearchScreen
+import com.sonnik.telemetry.ui.LockScreen
 import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.GeoScreen
 import com.sonnik.telemetry.ui.GeoMapScreen
@@ -32,16 +34,30 @@ import com.sonnik.telemetry.ui.TrackerScreen
 import com.sonnik.telemetry.ui.TrackerStatsScreen
 import com.sonnik.telemetry.ui.theme.TelemetryTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    // Lock gate state, driven by the activity lifecycle so it re-locks on background.
+    private val locked = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        locked.value = TelemetryApp.instance.lock.isEnabled()
         setContent {
             TelemetryTheme {
-                TelemetryNavHost()
+                if (locked.value) {
+                    LockScreen(onUnlocked = { locked.value = false })
+                } else {
+                    TelemetryNavHost()
+                }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Re-lock when the app leaves the foreground, so returning requires unlock.
+        if (TelemetryApp.instance.lock.isEnabled()) locked.value = true
     }
 }
 

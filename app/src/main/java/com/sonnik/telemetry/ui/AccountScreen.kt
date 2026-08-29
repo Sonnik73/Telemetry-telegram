@@ -30,6 +30,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.biometric.BiometricManager
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.sonnik.telemetry.TelemetryApp
 import dev.g000sha256.tdl.TdlResult
 import dev.g000sha256.tdl.dto.StorageStatistics
@@ -142,12 +152,103 @@ fun AccountScreen(onBack: () -> Unit) {
                 }
             }
 
+            LockSettingsCard()
+
             Button(
                 onClick = { app.telegram.logOut() },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Выйти из аккаунта")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LockSettingsCard() {
+    val app = TelemetryApp.instance
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(app.lock.isEnabled()) }
+    var biometric by remember { mutableStateOf(app.lock.biometricEnabled()) }
+    var pin by remember { mutableStateOf("") }
+    var pin2 by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    val canBiometric = remember {
+        BiometricManager.from(context).canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_WEAK,
+        ) == BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Блокировка входа", style = MaterialTheme.typography.titleMedium)
+            if (enabled) {
+                Text("PIN установлен. Приложение запрашивает код при запуске и после сворачивания.")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (canBiometric) "Вход по отпечатку / лицу" else "Биометрия недоступна на устройстве")
+                    Switch(
+                        checked = biometric && canBiometric,
+                        enabled = canBiometric,
+                        onCheckedChange = {
+                            biometric = it
+                            app.lock.setBiometricEnabled(it)
+                        },
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        app.lock.disable()
+                        enabled = false
+                        biometric = false
+                        message = "Блокировка отключена"
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Отключить блокировку")
+                }
+            } else {
+                Text("Задайте PIN (минимум 4 цифры), чтобы никто не открыл приложение без кода.")
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { new -> pin = new.filter { it.isDigit() } },
+                    label = { Text("PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = pin2,
+                    onValueChange = { new -> pin2 = new.filter { it.isDigit() } },
+                    label = { Text("Повторите PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        when {
+                            pin.length < 4 -> message = "PIN слишком короткий"
+                            pin != pin2 -> message = "PIN не совпадает"
+                            else -> {
+                                app.lock.setPin(pin)
+                                enabled = true
+                                pin = ""; pin2 = ""
+                                message = "PIN установлен"
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Установить PIN")
+                }
+            }
+            message?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
