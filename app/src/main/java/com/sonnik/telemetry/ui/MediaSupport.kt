@@ -1,9 +1,12 @@
 package com.sonnik.telemetry.ui
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -37,6 +42,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.sonnik.telemetry.TelemetryApp
 import dev.g000sha256.tdl.dto.MessageAnimation
 import dev.g000sha256.tdl.dto.MessageAudio
@@ -132,6 +138,31 @@ fun MediaView(att: MediaAttachment) {
     var preview by remember(att.fullFileId) { mutableStateOf<ImageBitmap?>(att.minithumb?.let { decode(it) }) }
     var saving by remember(att.fullFileId) { mutableStateOf(false) }
     var saved by remember(att.fullFileId) { mutableStateOf(false) }
+    var opening by remember(att.fullFileId) { mutableStateOf(false) }
+    var openError by remember(att.fullFileId) { mutableStateOf(false) }
+
+    // Downloads the full file, copies it into the shared cache and hands it to an
+    // external viewer/player (system gallery, video/audio player, document viewer).
+    fun open() {
+        if (opening) return
+        opening = true
+        openError = false
+        scope.launch {
+            val file = withContext(Dispatchers.IO) { prepareShareFile(context, att) }
+            val ok = file != null && runCatching {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, att.mimeType)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                )
+            }.isSuccess
+            opening = false
+            openError = !ok
+        }
+    }
 
     // Load a sharper preview (photo full size or thumbnail) over the blurred minithumb.
     LaunchedEffect(att.previewFileId) {
@@ -162,7 +193,7 @@ fun MediaView(att: MediaAttachment) {
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (att.showsImage && preview != null) {
-            Box {
+            Box(Modifier.clickable { open() }) {
                 Image(
                     bitmap = preview!!,
                     contentDescription = null,
@@ -179,10 +210,29 @@ fun MediaView(att: MediaAttachment) {
                         modifier = Modifier.align(Alignment.Center).size(48.dp),
                     )
                 }
+                if (opening) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center).size(32.dp),
+                        strokeWidth = 3.dp,
+                        color = Color.White,
+                    )
+                }
             }
         } else if (!att.showsImage) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Default.InsertDriveFile, contentDescription = null)
+            Row(
+                modifier = Modifier.clickable { open() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (opening) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        if (att.kind == MediaKind.VOICE || att.kind == MediaKind.AUDIO) Icons.Default.PlayArrow
+                        else Icons.Default.InsertDriveFile,
+                        contentDescription = null,
+                    )
+                }
                 Column {
                     Text(att.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                     Text(humanSize(att.sizeBytes), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -191,6 +241,9 @@ fun MediaView(att: MediaAttachment) {
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { open() }, enabled = !opening) {
+                Icon(Icons.Default.OpenInNew, contentDescription = "Открыть")
+            }
             IconButton(onClick = { if (!saving) saveLauncher.launch(att.fileName) }) {
                 if (saving) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -200,14 +253,29 @@ fun MediaView(att: MediaAttachment) {
             }
             Text(
                 when {
+                    openError -> "не удалось открыть"
                     saved -> "сохранено"
-                    else -> "${humanSize(att.sizeBytes)} · сохранить"
+                    opening -> "открываю…"
+                    else -> "${humanSize(att.sizeBytes)} · открыть / сохранить"
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (openError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+/** Copies the downloaded media into the shared cache dir; returns the file or null. */
+private suspend fun prepareShareFile(context: Context, att: MediaAttachment): File? {
+    val repo = TelemetryApp.instance.messages
+    val path = repo.localPath(att.fullFileId) ?: return null
+    return runCatching {
+        val dir = File(context.cacheDir, "shared_media").apply { mkdirs() }
+        val safe = att.fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "media_${att.fullFileId}" }
+        val out = File(dir, safe)
+        File(path).inputStream().use { input -> out.outputStream().use { input.copyTo(it) } }
+        out
+    }.getOrNull()
 }
 
 private fun decode(bytes: ByteArray): ImageBitmap? =
