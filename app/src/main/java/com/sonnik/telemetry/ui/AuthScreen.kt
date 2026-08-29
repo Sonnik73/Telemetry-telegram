@@ -3,6 +3,7 @@ package com.sonnik.telemetry.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +49,8 @@ fun AuthScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                // Edge-to-edge: consume the IME inset so login fields stay above the keyboard.
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
