@@ -1,5 +1,16 @@
 package com.sonnik.telemetry.intel
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.sonnik.telemetry.R
+import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.td.TelegramClient
 import dev.g000sha256.tdl.dto.Message
 import dev.g000sha256.tdl.dto.MessageAnimation
@@ -29,6 +40,7 @@ import kotlinx.coroutines.launch
  * keeps it alive in the background.
  */
 class IntelTracker(
+    private val context: Context,
     private val telegram: TelegramClient,
     val store: ArchiveStore,
 ) {
@@ -36,13 +48,23 @@ class IntelTracker(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var started = false
 
+    private val prefs = context.getSharedPreferences("telemetry", Context.MODE_PRIVATE)
+
     private val _changed = MutableStateFlow(0L)
     /** Bumped whenever an event is recorded, so open screens can refresh. */
     val changed: StateFlow<Long> = _changed
 
+    /** Whether to post a notification when a message is deleted or edited. */
+    fun alertsEnabled(): Boolean = prefs.getBoolean(KEY_ALERTS, false)
+
+    fun setAlertsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALERTS, enabled).apply()
+    }
+
     fun start() {
         if (started) return
         started = true
+        ensureChannel()
 
         scope.launch {
             telegram.client.newMessageUpdates.collect { update ->
@@ -68,6 +90,7 @@ class IntelTracker(
                     )
                     store.cache(update.chatId, update.messageId, cached.first, 0, newBody)
                     bump()
+                    notify("edited", cached.first, update.chatId, cached.second, newBody)
                 }
             }
         }
@@ -88,6 +111,7 @@ class IntelTracker(
                             newBody = "",
                         ),
                     )
+                    notify("deleted", cached.first, update.chatId, cached.second, "")
                 }
                 bump()
             }
@@ -111,6 +135,54 @@ class IntelTracker(
 
     private fun bump() {
         _changed.value = System.currentTimeMillis()
+    }
+
+    /** Posts a delete/edit alert if enabled and notifications are permitted. */
+    private suspend fun notify(kind: String, senderId: Long, chatId: Long, oldBody: String, newBody: String) {
+        if (!alertsEnabled()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val chats = TelemetryApp.instance.chats
+        val sender = runCatching {
+            chats.senderName(
+                if (senderId > 0) dev.g000sha256.tdl.dto.MessageSenderUser(senderId)
+                else dev.g000sha256.tdl.dto.MessageSenderChat(senderId),
+            )
+        }.getOrNull() ?: "Контакт"
+        val chatName = runCatching { chats.getChat(chatId)?.title }.getOrNull()
+        val deleted = kind == "deleted"
+        val title = (if (deleted) "🗑 Удалено" else "✏️ Изменено") +
+            " · $sender" + (if (chatName != null) " ($chatName)" else "")
+        val text = if (deleted) oldBody.take(200) else "${oldBody.take(120)} → ${newBody.take(120)}"
+        val notification = NotificationCompat.Builder(context, CHANNEL_INTEL)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context).notify(nextNotificationId(), notification)
+        }
+    }
+
+    private fun ensureChannel() {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_INTEL, "Удаления и правки", NotificationManager.IMPORTANCE_HIGH),
+        )
+    }
+
+    private fun nextNotificationId(): Int = (System.currentTimeMillis() % 100000).toInt() + 200000
+
+    private companion object {
+        const val KEY_ALERTS = "intel_alerts"
+        const val CHANNEL_INTEL = "intel_alerts"
     }
 }
 

@@ -1,5 +1,9 @@
 package com.sonnik.telemetry.ui
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -56,6 +62,23 @@ fun ArchiveScreen(onBack: () -> Unit) {
 
     var query by remember { mutableStateOf("") }
     var chatFilter by remember { mutableStateOf<Long?>(null) }
+    var alerts by remember { mutableStateOf(app.intel.alertsEnabled()) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        alerts = granted
+        app.intel.setAlertsEnabled(granted)
+    }
+
+    fun toggleAlerts(on: Boolean) {
+        if (on && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            alerts = on
+            app.intel.setAlertsEnabled(on)
+        }
+    }
 
     LaunchedEffect(changed) {
         val list = app.intel.store.events(limit = 1000)
@@ -102,6 +125,14 @@ fun ArchiveScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { toggleAlerts(!alerts) }) {
+                        Icon(
+                            if (alerts) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                            contentDescription = if (alerts) "Уведомления включены" else "Уведомления выключены",
+                        )
                     }
                 },
             )

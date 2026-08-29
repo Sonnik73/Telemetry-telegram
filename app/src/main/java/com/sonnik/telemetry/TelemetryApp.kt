@@ -34,7 +34,7 @@ class TelemetryApp : Application() {
     }
 
     val intel: IntelTracker by lazy {
-        IntelTracker(telegram, ArchiveStore(this))
+        IntelTracker(this, telegram, ArchiveStore(this))
     }
 
     private val crashFile: File
