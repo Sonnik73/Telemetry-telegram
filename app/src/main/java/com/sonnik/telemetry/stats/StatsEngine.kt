@@ -188,7 +188,7 @@ class StatsEngine(private val client: TdlClient) {
                         else -> Unit
                     }
 
-                    tallyText(textOf(content), wordCounts, emojiCounts)
+                    tallyText(textOf(message.content), wordCounts, emojiCounts)
 
                     onMessage(message)
                 } catch (e: CancellationException) {
