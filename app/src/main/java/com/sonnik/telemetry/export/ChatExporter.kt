@@ -34,6 +34,25 @@ enum class ExportFormat(val extension: String, val mimeType: String) {
     HTML("html", "text/html"),
 }
 
+/** Categories of message content the export can be filtered to. */
+enum class ExportContentType(val label: String) {
+    TEXT("Текст"),
+    PHOTO("Фото"),
+    VIDEO("Видео"),
+    AUDIO("Музыка"),
+    VOICE("Голосовые"),
+    VIDEO_NOTE("Видеосообщения"),
+    GIF("GIF"),
+    STICKER("Стикеры"),
+    DOCUMENT("Файлы"),
+    OTHER("Прочее");
+
+    companion object {
+        /** Types offered as filter checkboxes; OTHER (service/other) rides along with TEXT. */
+        val selectable: List<ExportContentType> = entries.filter { it != OTHER }
+    }
+}
+
 sealed interface ExportPhase {
     data class Scanning(
         val processed: Int,
@@ -87,6 +106,7 @@ class ChatExporter(
         mediaSink: MediaSink? = null,
         inlineMedia: Boolean = false,
         includeComments: Boolean = false,
+        contentTypes: Set<ExportContentType>? = null,
         onProgress: (ExportPhase) -> Unit,
     ): ExportResult {
         val tempFile = File.createTempFile("export", ".jsonl", cacheDir)
@@ -106,26 +126,28 @@ class ChatExporter(
                         onProgress(ExportPhase.Scanning(it.processed, it.estimatedTotal, downloadedFiles, downloadedBytes))
                     },
                     onMessage = { message ->
-                        val senderKey = message.senderId.key()
-                        val senderName = senderNames.getOrPut(senderKey) {
-                            repository.senderName(message.senderId)
+                        if (keep(message, contentTypes)) {
+                            val senderKey = message.senderId.key()
+                            val senderName = senderNames.getOrPut(senderKey) {
+                                repository.senderName(message.senderId)
+                            }
+                            val json = message.toJson(senderName, senderKey)
+                            val dl = attachMedia(json, message, inlineMedia, mediaSink)
+                            downloadedFiles += dl.files
+                            downloadedBytes += dl.bytes
+                            // Channel posts: pull the comment thread (with its media too).
+                            if (includeComments && message.isChannelPost) {
+                                val (comments, cdl) = fetchComments(chatId, message.id, senderNames, inlineMedia, mediaSink, contentTypes)
+                                if (comments.length() > 0) json.put("comments", comments)
+                                downloadedFiles += cdl.files
+                                downloadedBytes += cdl.bytes
+                            }
+                            val line = json.toString().toByteArray(StandardCharsets.UTF_8)
+                            offsets += bytesWritten
+                            spool.write(line)
+                            spool.write('\n'.code)
+                            bytesWritten += line.size + 1
                         }
-                        val json = message.toJson(senderName, senderKey)
-                        val dl = attachMedia(json, message, inlineMedia, mediaSink)
-                        downloadedFiles += dl.files
-                        downloadedBytes += dl.bytes
-                        // Channel posts: pull the comment thread (with its media too).
-                        if (includeComments && message.isChannelPost) {
-                            val (comments, cdl) = fetchComments(chatId, message.id, senderNames, inlineMedia, mediaSink)
-                            if (comments.length() > 0) json.put("comments", comments)
-                            downloadedFiles += cdl.files
-                            downloadedBytes += cdl.bytes
-                        }
-                        val line = json.toString().toByteArray(StandardCharsets.UTF_8)
-                        offsets += bytesWritten
-                        spool.write(line)
-                        spool.write('\n'.code)
-                        bytesWritten += line.size + 1
                     },
                 )
                 if (stats.error != null && offsets.isEmpty()) {
@@ -157,6 +179,29 @@ class ChatExporter(
             )
         } finally {
             tempFile.delete()
+        }
+    }
+
+    /** The single content category a message belongs to, for filtering. */
+    private fun Message.contentType(): ExportContentType = when (content) {
+        is MessageText -> ExportContentType.TEXT
+        is MessagePhoto -> ExportContentType.PHOTO
+        is MessageVideo -> ExportContentType.VIDEO
+        is MessageAudio -> ExportContentType.AUDIO
+        is MessageVoiceNote -> ExportContentType.VOICE
+        is MessageVideoNote -> ExportContentType.VIDEO_NOTE
+        is MessageAnimation -> ExportContentType.GIF
+        is MessageSticker -> ExportContentType.STICKER
+        is MessageDocument -> ExportContentType.DOCUMENT
+        else -> ExportContentType.OTHER
+    }
+
+    /** null = no filter (everything). Service/other messages ride along with TEXT. */
+    private fun keep(message: Message, types: Set<ExportContentType>?): Boolean {
+        if (types == null) return true
+        return when (val t = message.contentType()) {
+            ExportContentType.OTHER -> ExportContentType.TEXT in types
+            else -> t in types
         }
     }
 
@@ -203,6 +248,7 @@ class ChatExporter(
         senderNames: HashMap<String, String>,
         inlineMedia: Boolean,
         mediaSink: MediaSink?,
+        contentTypes: Set<ExportContentType>?,
     ): Pair<JSONArray, DlCounters> {
         val counters = DlCounters()
         val collected = ArrayList<Message>()
@@ -222,6 +268,7 @@ class ChatExporter(
         }
         val array = JSONArray()
         for (m in collected.sortedBy { it.date }) {
+            if (!keep(m, contentTypes)) continue
             val key = m.senderId.key()
             val name = senderNames.getOrPut(key) { repository.senderName(m.senderId) }
             val cj = m.toJson(name, key)

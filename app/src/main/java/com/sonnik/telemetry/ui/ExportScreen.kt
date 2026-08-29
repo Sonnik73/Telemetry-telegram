@@ -43,6 +43,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ChatSummary
 import com.sonnik.telemetry.export.ChatExporter
+import com.sonnik.telemetry.export.ExportContentType
 import com.sonnik.telemetry.export.ExportFormat
 import com.sonnik.telemetry.export.ExportPhase
 import com.sonnik.telemetry.export.MediaSink
@@ -69,6 +70,8 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
     var format by remember { mutableStateOf(ExportFormat.JSON) }
     var downloadMedia by remember { mutableStateOf(false) }
     var includeComments by remember { mutableStateOf(false) }
+    // Which content categories to export; all selected = export everything.
+    var selectedTypes by remember { mutableStateOf(ExportContentType.selectable.toSet()) }
     val isChannel = chat?.kind == com.sonnik.telemetry.data.ChatKind.CHANNEL
     var fromText by remember { mutableStateOf("") }
     var toText by remember { mutableStateOf("") }
@@ -110,6 +113,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         mediaSink = mediaSink,
                         inlineMedia = inlineMedia,
                         includeComments = includeComments && isChannel,
+                        contentTypes = selectedTypes,
                         onProgress = { phase = it },
                     )
                 }
@@ -257,6 +261,59 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
             }
 
             Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Что выгружать", style = MaterialTheme.typography.titleMedium)
+                    val allSelected = selectedTypes.size == ExportContentType.selectable.size
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = allSelected,
+                                onValueChange = { checked ->
+                                    selectedTypes = if (checked) ExportContentType.selectable.toSet() else emptySet()
+                                },
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = allSelected,
+                            onCheckedChange = { checked ->
+                                selectedTypes = if (checked) ExportContentType.selectable.toSet() else emptySet()
+                            },
+                        )
+                        Text("Все", style = MaterialTheme.typography.titleSmall)
+                    }
+                    ExportContentType.selectable.forEach { type ->
+                        val checked = type in selectedTypes
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .toggleable(
+                                    value = checked,
+                                    onValueChange = { on ->
+                                        selectedTypes = if (on) selectedTypes + type else selectedTypes - type
+                                    },
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { on ->
+                                    selectedTypes = if (on) selectedTypes + type else selectedTypes - type
+                                },
+                            )
+                            Text(type.label)
+                        }
+                    }
+                    Text(
+                        "Снимите галочки с ненужных типов — например оставьте только «Фото» " +
+                            "и «Видео». Служебные сообщения выгружаются вместе с текстом.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Период (пусто = вся история)", style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -295,6 +352,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         }
                     },
                     enabled = chat != null &&
+                        selectedTypes.isNotEmpty() &&
                         (fromText.isBlank() || parseDateOrNull(fromText) != null) &&
                         (toText.isBlank() || parseDateOrNull(toText) != null),
                     modifier = Modifier.fillMaxWidth(),
