@@ -1,10 +1,12 @@
 package com.sonnik.telemetry.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -249,6 +252,15 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
 private fun MessageBubble(msg: Message) {
     val outgoing = msg.isOutgoing
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    val scope = rememberCoroutineScope()
+    val repo = TelemetryApp.instance.messages
+    var translation by remember(msg.id) { mutableStateOf<String?>(null) }
+    var translating by remember(msg.id) { mutableStateOf(false) }
+
+    val att = mediaAttachment(msg.content)
+    val hasText = if (att != null) captionOf(msg).isNotBlank() else bodyOf(msg).isNotBlank() &&
+        msg.content is MessageText
+
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start,
@@ -260,7 +272,6 @@ private fun MessageBubble(msg: Message) {
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            val att = mediaAttachment(msg.content)
             if (att != null) {
                 MediaView(att)
                 val caption = captionOf(msg)
@@ -268,12 +279,49 @@ private fun MessageBubble(msg: Message) {
             } else {
                 Text(bodyOf(msg), style = MaterialTheme.typography.bodyMedium)
             }
-            Text(
-                formatDateTime(msg.date),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.End),
-            )
+
+            translation?.let {
+                HorizontalDivider(Modifier.padding(vertical = 2.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (hasText) {
+                    Text(
+                        when {
+                            translating -> "перевод…"
+                            translation != null -> "скрыть перевод"
+                            else -> "перевести"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable(enabled = !translating) {
+                            if (translation != null) {
+                                translation = null
+                            } else {
+                                translating = true
+                                scope.launch {
+                                    repo.translate(msg.chatId, msg.id)
+                                        .onSuccess { translation = it }
+                                        .onFailure { translation = "— не удалось перевести" }
+                                    translating = false
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    Spacer(Modifier.widthIn(min = 1.dp))
+                }
+                Text(
+                    formatDateTime(msg.date),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

@@ -102,6 +102,14 @@ class MessagesRepository(private val client: TdlClient) {
         }
     }
 
+    /** Translates a message's text/caption to [toLang] (default Russian). */
+    suspend fun translate(chatId: Long, messageId: Long, toLang: String = "ru"): Result<String> {
+        return when (val result = client.translateMessageText(chatId, messageId, toLang, "")) {
+            is TdlResult.Success -> Result.success(result.result.text)
+            is TdlResult.Failure -> Result.failure(Exception("${result.code}: ${result.message}"))
+        }
+    }
+
     suspend fun sendText(chatId: Long, text: String): Result<Message> {
         val content = InputMessageText(
             text = FormattedText(text = text, entities = emptyArray<TextEntity>()),
