@@ -5,6 +5,8 @@ import dev.g000sha256.tdl.TdlResult
 import dev.g000sha256.tdl.dto.FormattedText
 import dev.g000sha256.tdl.dto.InputMessageText
 import dev.g000sha256.tdl.dto.Message
+import dev.g000sha256.tdl.dto.SearchMessagesFilter
+import dev.g000sha256.tdl.dto.SearchMessagesFilterPhotoAndVideo
 import dev.g000sha256.tdl.dto.TextEntity
 
 /**
@@ -32,6 +34,32 @@ class MessagesRepository(private val client: TdlClient) {
             attempt++
         }
         return Result.success(emptyList())
+    }
+
+    /**
+     * Searches a chat's media (photos and videos by default) newest-first.
+     * Returns the page and the anchor for the next page (0 = no more).
+     */
+    suspend fun searchMedia(
+        chatId: Long,
+        fromMessageId: Long,
+        limit: Int,
+        filter: SearchMessagesFilter = SearchMessagesFilterPhotoAndVideo(),
+    ): Result<Pair<List<Message>, Long>> {
+        return when (
+            val result = client.searchChatMessages(
+                chatId = chatId,
+                query = "",
+                fromMessageId = fromMessageId,
+                offset = 0,
+                limit = limit,
+                filter = filter,
+            )
+        ) {
+            is TdlResult.Success ->
+                Result.success(result.result.messages.filterNotNull() to result.result.nextFromMessageId)
+            is TdlResult.Failure -> Result.failure(Exception("${result.code}: ${result.message}"))
+        }
     }
 
     suspend fun sendText(chatId: Long, text: String): Result<Message> {

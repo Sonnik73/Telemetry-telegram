@@ -148,17 +148,7 @@ fun MediaView(att: MediaAttachment) {
         opening = true
         openError = false
         scope.launch {
-            val file = withContext(Dispatchers.IO) { prepareShareFile(context, att) }
-            val ok = file != null && runCatching {
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, att.mimeType)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    },
-                )
-            }.isSuccess
+            val ok = openMediaExternally(context, att)
             opening = false
             openError = !ok
         }
@@ -265,6 +255,25 @@ fun MediaView(att: MediaAttachment) {
     }
 }
 
+/**
+ * Downloads the media, copies it into the shared cache and opens it in an external
+ * viewer/player via ACTION_VIEW. Returns false if it couldn't be downloaded or no
+ * app can open it. Safe to call from any coroutine (does IO off the main thread).
+ */
+suspend fun openMediaExternally(context: Context, att: MediaAttachment): Boolean {
+    val file = withContext(Dispatchers.IO) { prepareShareFile(context, att) } ?: return false
+    return runCatching {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, att.mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
+    }.isSuccess
+}
+
 /** Copies the downloaded media into the shared cache dir; returns the file or null. */
 private suspend fun prepareShareFile(context: Context, att: MediaAttachment): File? {
     val repo = TelemetryApp.instance.messages
@@ -278,10 +287,10 @@ private suspend fun prepareShareFile(context: Context, att: MediaAttachment): Fi
     }.getOrNull()
 }
 
-private fun decode(bytes: ByteArray): ImageBitmap? =
+internal fun decode(bytes: ByteArray): ImageBitmap? =
     runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull()
 
-private fun decodeFile(path: String): ImageBitmap? =
+internal fun decodeFile(path: String): ImageBitmap? =
     runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
 
 private fun humanSize(bytes: Long): String {

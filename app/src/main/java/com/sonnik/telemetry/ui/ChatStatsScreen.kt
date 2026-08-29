@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,7 +63,13 @@ internal fun parseDateOrNull(text: String): LocalDate? =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit, onOpenDialog: () -> Unit) {
+fun ChatStatsScreen(
+    chatId: Long,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    onOpenDialog: () -> Unit,
+    onOpenGallery: () -> Unit,
+) {
     val app = TelemetryApp.instance
     val engine = remember { StatsEngine(app.telegram.client) }
     val scope = rememberCoroutineScope()
@@ -91,6 +98,9 @@ fun ChatStatsScreen(chatId: Long, onBack: () -> Unit, onExport: () -> Unit, onOp
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenGallery) {
+                        Icon(Icons.Default.PhotoLibrary, contentDescription = "Медиа чата")
+                    }
                     IconButton(onClick = onOpenDialog) {
                         Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Открыть диалог")
                     }
