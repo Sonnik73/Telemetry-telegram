@@ -16,6 +16,11 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        // Ship only ARM (real phones); x86/x86_64 are emulator-only and roughly
+        // double the APK with TDLib's native libs.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {
