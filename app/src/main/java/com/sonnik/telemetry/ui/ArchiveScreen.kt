@@ -11,11 +11,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -45,9 +52,13 @@ fun ArchiveScreen(onBack: () -> Unit) {
 
     var events by remember { mutableStateOf<List<ArchiveEvent>>(emptyList()) }
     val names = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    val chatNames = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+
+    var query by remember { mutableStateOf("") }
+    var chatFilter by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(changed) {
-        val list = app.intel.store.events(limit = 300)
+        val list = app.intel.store.events(limit = 1000)
         events = list
         // Resolve sender names once per distinct id.
         val need = list.map { it.senderId }.toSet() - names.value.keys
@@ -60,7 +71,29 @@ fun ArchiveScreen(onBack: () -> Unit) {
             }
             names.value = resolved
         }
+        // Resolve chat titles for the chat filter.
+        val needChats = list.map { it.chatId }.toSet() - chatNames.value.keys
+        if (needChats.isNotEmpty()) {
+            val resolved = chatNames.value.toMutableMap()
+            for (id in needChats) {
+                resolved[id] = app.chats.getChat(id)?.title
+                    ?: app.chats.senderName(if (id > 0) MessageSenderUser(id) else MessageSenderChat(id))
+            }
+            chatNames.value = resolved
+        }
     }
+
+    val q = query.trim()
+    val filtered = events.filter { e ->
+        (chatFilter == null || e.chatId == chatFilter) &&
+            (q.isEmpty() ||
+                e.oldBody.contains(q, ignoreCase = true) ||
+                e.newBody.contains(q, ignoreCase = true) ||
+                (names.value[e.senderId]?.contains(q, ignoreCase = true) == true))
+    }
+    // Chats present in the log, ordered by their resolved title.
+    val chats = events.map { it.chatId }.distinct()
+        .sortedBy { chatNames.value[it]?.lowercase() ?: "" }
 
     Scaffold(
         topBar = {
@@ -88,17 +121,89 @@ fun ArchiveScreen(onBack: () -> Unit) {
             }
             return@Scaffold
         }
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(events) { e -> EventCard(e, names.value[e.senderId] ?: "…") }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Column(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Поиск по тексту") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Очистить")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                ChatFilterMenu(
+                    label = chatFilter?.let { chatNames.value[it] ?: "…" } ?: "Все чаты",
+                    chats = chats,
+                    chatNames = chatNames.value,
+                    selected = chatFilter,
+                    onSelect = { chatFilter = it },
+                )
+                Text(
+                    "Найдено: ${filtered.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (filtered.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Ничего не найдено", style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(filtered) { e ->
+                        EventCard(e, names.value[e.senderId] ?: "…", chatNames.value[e.chatId])
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun EventCard(e: ArchiveEvent, sender: String) {
+private fun ChatFilterMenu(
+    label: String,
+    chats: List<Long>,
+    chatNames: Map<Long, String>,
+    selected: Long?,
+    onSelect: (Long?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text("Чат: $label")
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Все чаты") },
+                onClick = { onSelect(null); expanded = false },
+            )
+            chats.forEach { id ->
+                DropdownMenuItem(
+                    text = { Text(chatNames[id] ?: id.toString()) },
+                    onClick = { onSelect(id); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EventCard(e: ArchiveEvent, sender: String, chatName: String?) {
     val deleted = e.kind == "deleted"
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -109,6 +214,9 @@ private fun EventCard(e: ArchiveEvent, sender: String) {
                     color = if (deleted) MaterialTheme.colorScheme.error else Color(0xFFB26A00),
                     style = MaterialTheme.typography.labelMedium,
                 )
+            }
+            if (chatName != null) {
+                Text(chatName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (deleted) {
                 Text(e.oldBody)
