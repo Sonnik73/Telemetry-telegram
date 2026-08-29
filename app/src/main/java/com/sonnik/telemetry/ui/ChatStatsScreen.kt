@@ -125,6 +125,8 @@ fun ChatStatsScreen(
         ) {
             QuickCountsCard(quick)
 
+            AutoDownloadCard(chatId)
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Полное сканирование", style = MaterialTheme.typography.titleMedium)
@@ -372,6 +374,69 @@ private fun DeepStatsCards(stats: DeepStats) {
     }
 
     CsvExportButton(stats)
+}
+
+@Composable
+private fun AutoDownloadCard(chatId: Long) {
+    val app = TelemetryApp.instance
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val store = app.mediaAuto.store
+    var enabled by remember { mutableStateOf(store.isEnabled(chatId)) }
+    var hasFolder by remember { mutableStateOf(store.folderUri() != null) }
+
+    val pickFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // Persist access across restarts so background download keeps working.
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        store.setFolderUri(uri.toString())
+        hasFolder = true
+        store.setEnabled(chatId, true)
+        enabled = true
+        app.mediaAuto.start()
+        app.presence.start()
+        com.sonnik.telemetry.presence.PresenceService.start(context)
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Автоскачивание медиа", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Новые фото, видео и файлы из этого чата будут автоматически сохраняться в " +
+                    "выбранную папку (в фоне, пока работает трекер).",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(if (enabled) "Включено" else "Выключено")
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = { on ->
+                        if (on && !hasFolder) {
+                            pickFolder.launch(null)
+                        } else {
+                            store.setEnabled(chatId, on)
+                            enabled = on
+                            if (on) {
+                                app.mediaAuto.start()
+                                app.presence.start()
+                                com.sonnik.telemetry.presence.PresenceService.start(context)
+                            }
+                        }
+                    },
+                )
+            }
+            OutlinedButton(onClick = { pickFolder.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (hasFolder) "Сменить папку" else "Выбрать папку")
+            }
+        }
+    }
 }
 
 @Composable

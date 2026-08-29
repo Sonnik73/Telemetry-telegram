@@ -25,6 +25,7 @@ class PresenceService : Service() {
         app.presence.start()
         app.geo.start()
         app.intel.start()
+        app.mediaAuto.start()
         val count = app.presence.store.watchedIds().size
         // Android restricts when a dataSync foreground service may start (e.g. from
         // BOOT_COMPLETED on Android 14+, or from the background). If disallowed, the

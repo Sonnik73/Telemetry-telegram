@@ -78,7 +78,8 @@ private fun TelemetryNavHost() {
                 val app = TelemetryApp.instance
                 app.geo.start()
                 app.intel.start()
-                if (app.presence.store.watchedIds().isNotEmpty()) {
+                app.mediaAuto.start()
+                if (app.presence.store.watchedIds().isNotEmpty() || app.mediaAuto.store.anyEnabled()) {
                     app.presence.start()
                     com.sonnik.telemetry.presence.PresenceService.start(context)
                 }

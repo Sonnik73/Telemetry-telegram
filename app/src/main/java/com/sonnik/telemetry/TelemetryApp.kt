@@ -2,6 +2,8 @@ package com.sonnik.telemetry
 
 import android.app.Application
 import android.util.Log
+import com.sonnik.telemetry.autodl.MediaAutoDownloader
+import com.sonnik.telemetry.autodl.MediaAutoStore
 import com.sonnik.telemetry.data.ChatRepository
 import com.sonnik.telemetry.data.MessagesRepository
 import com.sonnik.telemetry.geo.GeoStore
@@ -39,6 +41,10 @@ class TelemetryApp : Application() {
     }
 
     val lock: AppLock by lazy { AppLock(this) }
+
+    val mediaAuto: MediaAutoDownloader by lazy {
+        MediaAutoDownloader(this, telegram, MediaAutoStore(this))
+    }
 
     private val crashFile: File
         get() = File(filesDir, "last_crash.txt")
