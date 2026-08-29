@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,6 +33,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +74,9 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val stealthState = rememberUpdatedState(stealth)
+    var loadingMore by remember { mutableStateOf(false) }
+    var reachedTop by remember { mutableStateOf(false) }
+    var primed by remember { mutableStateOf(false) }
 
     fun sortedInsert(msg: Message) {
         if (messages.any { it.id == msg.id }) return
@@ -109,8 +114,27 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
         onDispose { scope.launch { repo.closeChat(chatId) } }
     }
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    // Scroll to the bottom on initial load and whenever a newer message arrives at
+    // the end — keyed on the newest id, so prepending older history does NOT jump.
+    LaunchedEffect(messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+            primed = true
+        }
+    }
+
+    // Load older history when the user scrolls to the very top.
+    val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
+    LaunchedEffect(atTop, primed) {
+        if (atTop && primed && !loadingMore && !reachedTop && !loading && messages.isNotEmpty()) {
+            loadingMore = true
+            val oldest = messages.first().id
+            val before = messages.size
+            repo.loadHistory(chatId, fromMessageId = oldest, limit = 40)
+                .onSuccess { older -> older.forEach { sortedInsert(it) } }
+            if (messages.size == before) reachedTop = true
+            loadingMore = false
+        }
     }
 
     Scaffold(
@@ -165,6 +189,13 @@ fun DialogScreen(chatId: Long, onBack: () -> Unit) {
                     .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                if (loadingMore) {
+                    item(key = "loading_more") {
+                        Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(24.dp))
+                        }
+                    }
+                }
                 items(messages, key = { it.id }) { msg -> MessageBubble(msg) }
             }
 
