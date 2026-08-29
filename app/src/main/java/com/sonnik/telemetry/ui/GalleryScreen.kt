@@ -168,7 +168,10 @@ fun GalleryScreen(chatId: Long, onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
                 ) {
-                    items(items, key = { it.fullFileId }) { att ->
+                    // Key by position: the same file id can legitimately appear in more
+                    // than one message, so it isn't unique enough for a LazyGrid key.
+                    items(items.size) { index ->
+                        val att = items[index]
                         GalleryCell(att) {
                             scope.launch { openMediaExternally(context, att) }
                         }
