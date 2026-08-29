@@ -26,7 +26,15 @@ class PresenceService : Service() {
         app.geo.start()
         app.intel.start()
         val count = app.presence.store.watchedIds().size
-        startForegroundCompat(NOTIFICATION_ID, buildNotification(count))
+        // Android restricts when a dataSync foreground service may start (e.g. from
+        // BOOT_COMPLETED on Android 14+, or from the background). If disallowed, the
+        // in-process collectors above still run; just don't crash the app.
+        try {
+            startForegroundCompat(NOTIFICATION_ID, buildNotification(count))
+        } catch (e: Exception) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 
