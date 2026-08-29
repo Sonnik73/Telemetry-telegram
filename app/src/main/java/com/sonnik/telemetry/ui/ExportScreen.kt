@@ -68,6 +68,8 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
     var chat by remember { mutableStateOf<ChatSummary?>(null) }
     var format by remember { mutableStateOf(ExportFormat.JSON) }
     var downloadMedia by remember { mutableStateOf(false) }
+    var includeComments by remember { mutableStateOf(false) }
+    val isChannel = chat?.kind == com.sonnik.telemetry.data.ChatKind.CHANNEL
     var fromText by remember { mutableStateOf("") }
     var toText by remember { mutableStateOf("") }
     var phase by remember { mutableStateOf<ExportPhase?>(null) }
@@ -107,6 +109,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         output = output,
                         mediaSink = mediaSink,
                         inlineMedia = inlineMedia,
+                        includeComments = includeComments && isChannel,
                         onProgress = { phase = it },
                     )
                 }
@@ -231,6 +234,24 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                    if (isChannel) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .toggleable(value = includeComments, onValueChange = { includeComments = it }),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = includeComments, onCheckedChange = { includeComments = it })
+                            Text("Выгружать комментарии к постам (с медиа)")
+                        }
+                        if (includeComments) {
+                            Text(
+                                "К каждому посту подтянутся комментарии из группы обсуждений вместе с их " +
+                                    "медиа. Экспорт будет заметно дольше.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }

@@ -26,6 +26,7 @@ import java.text.SimpleDateFormat
 import java.util.Base64
 import java.util.Date
 import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONObject
 
 enum class ExportFormat(val extension: String, val mimeType: String) {
@@ -85,6 +86,7 @@ class ChatExporter(
         output: OutputStream,
         mediaSink: MediaSink? = null,
         inlineMedia: Boolean = false,
+        includeComments: Boolean = false,
         onProgress: (ExportPhase) -> Unit,
     ): ExportResult {
         val tempFile = File.createTempFile("export", ".jsonl", cacheDir)
@@ -109,22 +111,15 @@ class ChatExporter(
                             repository.senderName(message.senderId)
                         }
                         val json = message.toJson(senderName, senderKey)
-                        val media = message.mediaFile()
-                        if (media != null) {
-                            if (inlineMedia) {
-                                // Defer the download to the write phase so only one
-                                // media file lives on disk at a time.
-                                json.put("_fid", media.first.id)
-                            } else if (mediaSink != null) {
-                                when (val saved = downloadInto(mediaSink, media.first, media.second)) {
-                                    is DownloadOutcome.Saved -> {
-                                        json.put("file", "files/${media.second}")
-                                        downloadedFiles++
-                                        downloadedBytes += saved.bytes
-                                    }
-                                    is DownloadOutcome.Failed -> json.put("file_error", saved.reason)
-                                }
-                            }
+                        val dl = attachMedia(json, message, inlineMedia, mediaSink)
+                        downloadedFiles += dl.files
+                        downloadedBytes += dl.bytes
+                        // Channel posts: pull the comment thread (with its media too).
+                        if (includeComments && message.isChannelPost) {
+                            val (comments, cdl) = fetchComments(chatId, message.id, senderNames, inlineMedia, mediaSink)
+                            if (comments.length() > 0) json.put("comments", comments)
+                            downloadedFiles += cdl.files
+                            downloadedBytes += cdl.bytes
                         }
                         val line = json.toString().toByteArray(StandardCharsets.UTF_8)
                         offsets += bytesWritten
@@ -168,6 +163,74 @@ class ChatExporter(
     private sealed interface DownloadOutcome {
         data class Saved(val bytes: Long) : DownloadOutcome
         data class Failed(val reason: String) : DownloadOutcome
+    }
+
+    /** Running totals of media saved during folder-mode export. */
+    private class DlCounters(var files: Int = 0, var bytes: Long = 0)
+
+    /** Attaches a message's media to its JSON per the active mode, returning saved totals. */
+    private suspend fun attachMedia(
+        json: JSONObject,
+        message: Message,
+        inlineMedia: Boolean,
+        mediaSink: MediaSink?,
+    ): DlCounters {
+        val counters = DlCounters()
+        val media = message.mediaFile() ?: return counters
+        if (inlineMedia) {
+            // Deferred to the write phase so only one media file is on disk at a time.
+            json.put("_fid", media.first.id)
+        } else if (mediaSink != null) {
+            when (val saved = downloadInto(mediaSink, media.first, media.second)) {
+                is DownloadOutcome.Saved -> {
+                    json.put("file", "files/${media.second}")
+                    counters.files++
+                    counters.bytes += saved.bytes
+                }
+                is DownloadOutcome.Failed -> json.put("file_error", saved.reason)
+            }
+        }
+        return counters
+    }
+
+    /**
+     * Fetches the comment thread of a channel post (the discussion-group replies)
+     * newest-to-oldest, returning them chronologically as JSON with media attached.
+     */
+    private suspend fun fetchComments(
+        chatId: Long,
+        postId: Long,
+        senderNames: HashMap<String, String>,
+        inlineMedia: Boolean,
+        mediaSink: MediaSink?,
+    ): Pair<JSONArray, DlCounters> {
+        val counters = DlCounters()
+        val collected = ArrayList<Message>()
+        var fromMessageId = 0L
+        loop@ while (collected.size < MAX_COMMENTS) {
+            val batch = when (val result = client.getMessageThreadHistory(chatId, postId, fromMessageId, 0, 100)) {
+                is TdlResult.Success -> result.result.messages.filterNotNull()
+                is TdlResult.Failure -> break@loop // no thread / not a discussion post
+            }
+            if (batch.isEmpty()) break
+            for (m in batch) {
+                fromMessageId = m.id
+                // Skip the post itself echoed as the thread root.
+                if (m.id == postId) continue
+                collected += m
+            }
+        }
+        val array = JSONArray()
+        for (m in collected.sortedBy { it.date }) {
+            val key = m.senderId.key()
+            val name = senderNames.getOrPut(key) { repository.senderName(m.senderId) }
+            val cj = m.toJson(name, key)
+            val dl = attachMedia(cj, m, inlineMedia, mediaSink)
+            counters.files += dl.files
+            counters.bytes += dl.bytes
+            array.put(cj)
+        }
+        return array to counters
     }
 
     private suspend fun downloadInto(sink: MediaSink, file: TdFile, name: String): DownloadOutcome {
@@ -281,6 +344,9 @@ class ChatExporter(
             .media{color:#555;font-style:italic}
             img,video{max-width:100%;border-radius:8px;margin-top:6px;display:block}
             audio{width:100%;margin-top:6px}
+            .comments{margin:6px 0 2px 14px;border-left:3px solid #dfe6ee;padding-left:10px}
+            .comment{padding:4px 0}
+            .comments-title{color:#888;font-size:.8em;margin-top:6px}
             h1{font-size:1.3em}
             </style></head><body>
             <h1>${escapeHtml(chatTitle)}</h1>
@@ -298,31 +364,29 @@ class ChatExporter(
             writer.write(escapeHtml(message.optString("date")))
             writer.write("</span>")
 
-            val type = message.optString("type")
-            val fileId = if (inlineMedia && message.has("_fid")) message.optInt("_fid") else 0
-            val sizeBytes = message.optLong("size_bytes", -1)
-            if (fileId != 0) {
-                if (sizeBytes in 0..MAX_INLINE_BYTES) {
-                    val bytes = embedMedia(writer, type, fileId, message.optString("file_name"))
-                    if (bytes >= 0) {
-                        embeddedFiles++
-                        embeddedBytes += bytes
-                    } else {
-                        writeMediaNote(writer, type, message, "не удалось скачать")
-                    }
-                } else {
-                    writeMediaNote(writer, type, message, "слишком большой для встраивания")
-                }
-            } else if (type != "text") {
-                writeMediaNote(writer, type, message, null)
-            }
+            val (files, bytes) = renderMessageContent(writer, message, inlineMedia)
+            embeddedFiles += files
+            embeddedBytes += bytes
 
-            val text = message.optString("text")
-            if (text.isNotEmpty()) {
-                writer.write("<div>")
-                writer.write(escapeHtml(text).replace("\n", "<br>"))
+            val comments = message.optJSONArray("comments")
+            if (comments != null && comments.length() > 0) {
+                writer.write("<div class=\"comments-title\">Комментарии: ${comments.length()}</div>")
+                writer.write("<div class=\"comments\">")
+                for (ci in 0 until comments.length()) {
+                    val c = comments.getJSONObject(ci)
+                    writer.write("<div class=\"comment\"><span class=\"from\">")
+                    writer.write(escapeHtml(c.optString("from")))
+                    writer.write("</span><span class=\"date\">")
+                    writer.write(escapeHtml(c.optString("date")))
+                    writer.write("</span>")
+                    val (cf, cb) = renderMessageContent(writer, c, inlineMedia)
+                    embeddedFiles += cf
+                    embeddedBytes += cb
+                    writer.write("</div>")
+                }
                 writer.write("</div>")
             }
+
             writer.write("</div>\n")
             val written = offsets.size - i
             if (written % 100 == 0) {
@@ -332,6 +396,45 @@ class ChatExporter(
         writer.write("</body></html>\n")
         onProgress(ExportPhase.Writing(offsets.size, offsets.size, embeddedFiles, embeddedBytes))
         return embeddedFiles to embeddedBytes
+    }
+
+    /** Renders one message's media + text into the page; returns embedded (files, bytes). */
+    private suspend fun renderMessageContent(
+        writer: BufferedWriter,
+        message: JSONObject,
+        inlineMedia: Boolean,
+    ): Pair<Int, Long> {
+        var files = 0
+        var bytes = 0L
+        val type = message.optString("type")
+        val fileId = if (inlineMedia && message.has("_fid")) message.optInt("_fid") else 0
+        val sizeBytes = message.optLong("size_bytes", -1)
+        if (fileId != 0) {
+            if (sizeBytes in 0..MAX_INLINE_BYTES) {
+                val b = embedMedia(writer, type, fileId, message.optString("file_name"))
+                if (b >= 0) {
+                    files++
+                    bytes += b
+                } else {
+                    writeMediaNote(writer, type, message, "не удалось скачать")
+                }
+            } else {
+                writeMediaNote(writer, type, message, "слишком большой для встраивания")
+            }
+        } else if (message.has("file")) {
+            // Folder-mode reference (relative path next to the export).
+            val href = escapeHtml(message.optString("file"))
+            writer.write("<div class=\"media\"><a href=\"$href\">${escapeHtml(message.optString("file_name", "файл"))}</a></div>")
+        } else if (type != "text") {
+            writeMediaNote(writer, type, message, null)
+        }
+        val text = message.optString("text")
+        if (text.isNotEmpty()) {
+            writer.write("<div>")
+            writer.write(escapeHtml(text).replace("\n", "<br>"))
+            writer.write("</div>")
+        }
+        return files to bytes
     }
 
     /**
@@ -503,6 +606,7 @@ class ChatExporter(
     private companion object {
         // Cap per-file inlining so the self-contained HTML stays openable in a browser.
         const val MAX_INLINE_BYTES = 25L * 1024 * 1024
+        const val MAX_COMMENTS = 2000
     }
 }
 
