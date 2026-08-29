@@ -18,22 +18,42 @@ import dev.g000sha256.tdl.dto.TextEntity
  */
 class MessagesRepository(private val client: TdlClient) {
 
-    /** Loads up to [limit] messages older than [fromMessageId] (0 = newest). No read receipts. */
+    /**
+     * Loads up to [limit] messages older than [fromMessageId] (0 = newest). No read receipts.
+     *
+     * TDLib's first getChatHistory on a not-yet-opened chat returns only what's in
+     * the local cache — often just the last message, or nothing at all. So this
+     * pages from the newest anchor downwards, following the oldest returned id,
+     * until it has [limit] messages or the history runs out. Empty pages (a cold
+     * cache priming from the server) are retried a few times before giving up.
+     */
     suspend fun loadHistory(chatId: Long, fromMessageId: Long, limit: Int): Result<List<Message>> {
-        // TDLib often returns fewer than requested on the first call; one retry
-        // with the same anchor usually fills the page from the local cache/server.
-        var attempt = 0
-        while (attempt < 2) {
-            when (val result = client.getChatHistory(chatId, fromMessageId, 0, limit, onlyLocal = false)) {
+        val collected = LinkedHashMap<Long, Message>()
+        var anchor = fromMessageId
+        var emptyStreak = 0
+        var pages = 0
+        while (collected.size < limit && pages < 12) {
+            pages++
+            when (val result = client.getChatHistory(chatId, anchor, 0, limit, onlyLocal = false)) {
                 is TdlResult.Success -> {
-                    val messages = result.result.messages.filterNotNull()
-                    if (messages.isNotEmpty() || attempt == 1) return Result.success(messages)
+                    val page = result.result.messages.filterNotNull()
+                    if (page.isEmpty()) {
+                        // Cold cache: give TDLib a couple of tries to fetch from the server.
+                        if (++emptyStreak >= 3) break else continue
+                    }
+                    emptyStreak = 0
+                    for (m in page) collected[m.id] = m
+                    val oldest = page.minByOrNull { it.id }?.id ?: break
+                    if (oldest == anchor) break // no further progress
+                    anchor = oldest
                 }
-                is TdlResult.Failure -> return Result.failure(Exception("${result.code}: ${result.message}"))
+                is TdlResult.Failure -> {
+                    if (collected.isNotEmpty()) break
+                    return Result.failure(Exception("${result.code}: ${result.message}"))
+                }
             }
-            attempt++
         }
-        return Result.success(emptyList())
+        return Result.success(collected.values.toList())
     }
 
     /**
