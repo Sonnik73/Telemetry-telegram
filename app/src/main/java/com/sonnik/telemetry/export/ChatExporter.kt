@@ -107,6 +107,7 @@ class ChatExporter(
         inlineMedia: Boolean = false,
         includeComments: Boolean = false,
         contentTypes: Set<ExportContentType>? = null,
+        maxMediaBytes: Long? = null,
         onProgress: (ExportPhase) -> Unit,
     ): ExportResult {
         val tempFile = File.createTempFile("export", ".jsonl", cacheDir)
@@ -132,12 +133,12 @@ class ChatExporter(
                                 repository.senderName(message.senderId)
                             }
                             val json = message.toJson(senderName, senderKey)
-                            val dl = attachMedia(json, message, inlineMedia, mediaSink)
+                            val dl = attachMedia(json, message, inlineMedia, mediaSink, maxMediaBytes)
                             downloadedFiles += dl.files
                             downloadedBytes += dl.bytes
                             // Channel posts: pull the comment thread (with its media too).
                             if (includeComments && message.isChannelPost) {
-                                val (comments, cdl) = fetchComments(chatId, message.id, senderNames, inlineMedia, mediaSink, contentTypes)
+                                val (comments, cdl) = fetchComments(chatId, message.id, senderNames, inlineMedia, mediaSink, contentTypes, maxMediaBytes)
                                 if (comments.length() > 0) json.put("comments", comments)
                                 downloadedFiles += cdl.files
                                 downloadedBytes += cdl.bytes
@@ -219,9 +220,17 @@ class ChatExporter(
         message: Message,
         inlineMedia: Boolean,
         mediaSink: MediaSink?,
+        maxMediaBytes: Long?,
     ): DlCounters {
         val counters = DlCounters()
         val media = message.mediaFile() ?: return counters
+        val downloading = inlineMedia || mediaSink != null
+        // Respect the size cap only when we'd actually fetch the file; oversized media
+        // stays in the export as metadata with a note, without being downloaded.
+        if (downloading && maxMediaBytes != null && media.first.sizeOrExpected() > maxMediaBytes) {
+            json.put("file_skipped", "больше ${maxMediaBytes / (1024 * 1024)} МБ")
+            return counters
+        }
         if (inlineMedia) {
             // Deferred to the write phase so only one media file is on disk at a time.
             json.put("_fid", media.first.id)
@@ -249,6 +258,7 @@ class ChatExporter(
         inlineMedia: Boolean,
         mediaSink: MediaSink?,
         contentTypes: Set<ExportContentType>?,
+        maxMediaBytes: Long?,
     ): Pair<JSONArray, DlCounters> {
         val counters = DlCounters()
         val collected = ArrayList<Message>()
@@ -272,7 +282,7 @@ class ChatExporter(
             val key = m.senderId.key()
             val name = senderNames.getOrPut(key) { repository.senderName(m.senderId) }
             val cj = m.toJson(name, key)
-            val dl = attachMedia(cj, m, inlineMedia, mediaSink)
+            val dl = attachMedia(cj, m, inlineMedia, mediaSink, maxMediaBytes)
             counters.files += dl.files
             counters.bytes += dl.bytes
             array.put(cj)
@@ -473,7 +483,8 @@ class ChatExporter(
             val href = escapeHtml(message.optString("file"))
             writer.write("<div class=\"media\"><a href=\"$href\">${escapeHtml(message.optString("file_name", "файл"))}</a></div>")
         } else if (type != "text") {
-            writeMediaNote(writer, type, message, null)
+            val skipped = if (message.has("file_skipped")) message.optString("file_skipped") else null
+            writeMediaNote(writer, type, message, skipped)
         }
         val text = message.optString("text")
         if (text.isNotEmpty()) {

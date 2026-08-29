@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.sonnik.telemetry.TelemetryApp
@@ -70,6 +72,7 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
     var chat by remember { mutableStateOf<ChatSummary?>(null) }
     var format by remember { mutableStateOf(ExportFormat.JSON) }
     var downloadMedia by remember { mutableStateOf(false) }
+    var maxMediaMb by remember { mutableStateOf("") }
     var includeComments by remember { mutableStateOf(false) }
     // Which content categories to export; all selected = export everything.
     var selectedTypes by remember { mutableStateOf(ExportContentType.selectable.toSet()) }
@@ -115,6 +118,9 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                         inlineMedia = inlineMedia,
                         includeComments = includeComments && isChannel,
                         contentTypes = selectedTypes,
+                        maxMediaBytes = maxMediaMb.trim().toLongOrNull()
+                            ?.takeIf { it > 0 }
+                            ?.let { it * 1024 * 1024 },
                         onProgress = { phase = it },
                     )
                 }
@@ -241,6 +247,20 @@ fun ExportScreen(chatId: Long, onBack: () -> Unit) {
                                         "files/ со всеми медиа. Экспорт будет дольше, объём — как " +
                                         "суммарный размер медиа."
                             },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedTextField(
+                            value = maxMediaMb,
+                            onValueChange = { new -> maxMediaMb = new.filter { it.isDigit() } },
+                            label = { Text("Не выгружать медиа больше, МБ") },
+                            placeholder = { Text("пусто = без лимита") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Файлы крупнее лимита не скачиваются — в экспорт попадут только их " +
+                                "данные (тип, имя, размер) с пометкой. Удобно, чтобы не тянуть тяжёлые видео.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
