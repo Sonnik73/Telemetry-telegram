@@ -89,6 +89,17 @@ fun BirthdaysScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 },
+                actions = {
+                    InfoButton(
+                        "Дни рождения контактов",
+                        listOf(
+                            "Опрашивает контакты и показывает, у кого когда день рождения.",
+                            "Отсортировано по ближайшим датам.",
+                            "Видно только тех, кто указал дату и не скрыл её в приватности.",
+                            "Тап открывает досье на контакт.",
+                        ),
+                    )
+                },
             )
         },
     ) { padding ->

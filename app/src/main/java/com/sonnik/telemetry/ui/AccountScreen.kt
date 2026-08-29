@@ -83,6 +83,16 @@ fun AccountScreen(onBack: () -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 },
+                actions = {
+                    InfoButton(
+                        "Аккаунт",
+                        listOf(
+                            "Профиль, объём локального кэша TDLib и топ чатов по размеру кэша.",
+                            "Блокировка входа: PIN-код (хранится как SHA-256) и вход по отпечатку/лицу.",
+                            "Выход из аккаунта.",
+                        ),
+                    )
+                },
             )
         },
     ) { padding ->
@@ -161,6 +171,12 @@ fun AccountScreen(onBack: () -> Unit) {
             ) {
                 Text("Выйти из аккаунта")
             }
+
+            Text(
+                "Telemetry · версия ${com.sonnik.telemetry.BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

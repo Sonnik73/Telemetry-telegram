@@ -119,6 +119,16 @@ fun GlobalSearchScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 },
+                actions = {
+                    InfoButton(
+                        "Глобальный поиск",
+                        listOf(
+                            "Поиск по всем чатам сразу (серверный, средствами TDLib).",
+                            "Результаты — с названием чата, отправителем и датой; подгружаются при прокрутке.",
+                            "Тап по результату открывает диалог нужного чата.",
+                        ),
+                    )
+                },
             )
         },
     ) { padding ->

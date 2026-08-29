@@ -83,6 +83,16 @@ fun OverviewScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 },
+                actions = {
+                    InfoButton(
+                        "Сводка по аккаунту",
+                        listOf(
+                            "Суммарное число сообщений по всем чатам с прогрессом опроса и отменой.",
+                            "Разбивка по типам чатов (личные, группы, каналы).",
+                            "Топ-20 самых активных чатов; тап открывает статистику чата.",
+                        ),
+                    )
+                },
             )
         },
     ) { padding ->

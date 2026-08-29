@@ -127,6 +127,14 @@ fun GalleryScreen(chatId: Long, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    InfoButton(
+                        "Галерея медиа чата",
+                        listOf(
+                            "Сетка всех фото и видео чата, подгружается по мере прокрутки.",
+                            "Тап по элементу открывает его во внешнем просмотрщике/плеере.",
+                            "Кнопка ⬇ сверху — сохранить все загруженные медиа в выбранную папку.",
+                        ),
+                    )
                     IconButton(
                         onClick = { if (!saving && items.isNotEmpty()) saveTree.launch(null) },
                         enabled = !saving && items.isNotEmpty(),

@@ -9,31 +9,41 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Cake
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ChatKind
 import com.sonnik.telemetry.data.ChatSummary
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,7 +68,8 @@ fun ChatListScreen(
     onOpenSearch: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
-    var menuOpen by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
     var chats by remember { mutableStateOf<List<ChatSummary>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -74,27 +86,98 @@ fun ChatListScreen(
 
     var crashText by remember { mutableStateOf(TelemetryApp.instance.readLastCrash()) }
 
+    fun go(action: () -> Unit) {
+        scope.launch { drawerState.close() }
+        action()
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text(
+                    "Telemetry",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(16.dp),
+                )
+                HorizontalDivider()
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.QueryStats, contentDescription = null) },
+                    label = { Text("Сводка по аккаунту") },
+                    selected = false,
+                    onClick = { go(onOpenOverview) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.People, contentDescription = null) },
+                    label = { Text("Онлайн-трекер") },
+                    selected = false,
+                    onClick = { go(onOpenTracker) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Place, contentDescription = null) },
+                    label = { Text("Геотрекинг") },
+                    selected = false,
+                    onClick = { go(onOpenGeo) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                    label = { Text("Архив: удалённое и правки") },
+                    selected = false,
+                    onClick = { go(onOpenArchive) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Cake, contentDescription = null) },
+                    label = { Text("Дни рождения контактов") },
+                    selected = false,
+                    onClick = { go(onOpenBirthdays) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    label = { Text("Поиск по всем чатам") },
+                    selected = false,
+                    onClick = { go(onOpenSearch) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
+                    label = { Text("Аккаунт") },
+                    selected = false,
+                    onClick = { go(onOpenAccount) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+            }
+        },
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Чаты") },
+                navigationIcon = {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Default.Menu, contentDescription = "Меню")
+                    }
+                },
                 actions = {
+                    InfoButton(
+                        "Список чатов",
+                        listOf(
+                            "Все диалоги, группы и каналы аккаунта с поиском по названию.",
+                            "Тап по чату — статистика, экспорт, диалог со скрытым чтением и галерея медиа.",
+                            "Меню слева (☰) — сводка, онлайн-трекер, геотрекинг, архив удалённого, дни рождения, поиск, аккаунт.",
+                            "Лупа — глобальный поиск сообщений по всем чатам.",
+                        ),
+                    )
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Default.Search, contentDescription = "Поиск по всем чатам")
                     }
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить")
-                    }
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Меню")
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Сводка по аккаунту") }, onClick = { menuOpen = false; onOpenOverview() })
-                        DropdownMenuItem(text = { Text("Онлайн-трекер") }, onClick = { menuOpen = false; onOpenTracker() })
-                        DropdownMenuItem(text = { Text("Геотрекинг") }, onClick = { menuOpen = false; onOpenGeo() })
-                        DropdownMenuItem(text = { Text("Архив: удалённое и правки") }, onClick = { menuOpen = false; onOpenArchive() })
-                        DropdownMenuItem(text = { Text("Дни рождения контактов") }, onClick = { menuOpen = false; onOpenBirthdays() })
-                        DropdownMenuItem(text = { Text("Аккаунт") }, onClick = { menuOpen = false; onOpenAccount() })
                     }
                 },
             )
@@ -151,6 +234,7 @@ fun ChatListScreen(
                 }
             }
         }
+    }
     }
 }
 
