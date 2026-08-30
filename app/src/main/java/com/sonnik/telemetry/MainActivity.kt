@@ -22,6 +22,7 @@ import com.sonnik.telemetry.ui.BirthdaysScreen
 import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.DossierScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
+import com.sonnik.telemetry.ui.ContactStatusScreen
 import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.GalleryScreen
@@ -112,6 +113,7 @@ private fun TelemetryNavHost() {
                 onOpenBirthdays = { navController.navigate("birthdays") },
                 onOpenSearch = { navController.navigate("search") },
                 onOpenKeywords = { navController.navigate("keywords") },
+                onOpenContactStatus = { navController.navigate("contactstatus") },
                 onOpenSettings = { navController.navigate("settings") },
             )
         }
@@ -154,6 +156,12 @@ private fun TelemetryNavHost() {
         }
         composable("settings") {
             SettingsScreen(onBack = { navController.popBackStack() })
+        }
+        composable("contactstatus") {
+            ContactStatusScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
+            )
         }
         composable("search") {
             GlobalSearchScreen(

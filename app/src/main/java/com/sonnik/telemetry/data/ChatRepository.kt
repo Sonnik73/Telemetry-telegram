@@ -11,10 +11,17 @@ import dev.g000sha256.tdl.dto.ChatTypeSupergroup
 import dev.g000sha256.tdl.dto.MessageSender
 import dev.g000sha256.tdl.dto.MessageSenderChat
 import dev.g000sha256.tdl.dto.MessageSenderUser
+import dev.g000sha256.tdl.dto.User
+import dev.g000sha256.tdl.dto.UserTypeDeleted
 
 enum class ChatKind { PRIVATE, GROUP, CHANNEL, SECRET }
 
 data class WatchCandidate(val userId: Long, val title: String)
+
+/** Result of a contact-status scan: whether a contact is deleted or dropped you. */
+enum class ContactStatusKind { DELETED, NOT_IN_THEIR_CONTACTS, OK }
+
+data class ContactStatus(val userId: Long, val name: String, val kind: ContactStatusKind)
 
 data class ChatSummary(
     val id: Long,
@@ -26,6 +33,44 @@ data class ChatSummary(
 )
 
 class ChatRepository(private val client: TdlClient) {
+
+    /**
+     * Scans the address book and classifies each contact:
+     *  - DELETED — the account was deleted;
+     *  - NOT_IN_THEIR_CONTACTS — you have them, but they don't have you (they removed
+     *    you from contacts or blocked you; this is a heuristic, not a certainty);
+     *  - OK — mutual/normal.
+     */
+    suspend fun scanContacts(onProgress: (Int, Int) -> Unit): List<ContactStatus> {
+        val ids = when (val r = client.getContacts()) {
+            is TdlResult.Success -> r.result.userIds.toList()
+            is TdlResult.Failure -> return emptyList()
+        }
+        val result = ArrayList<ContactStatus>()
+        ids.forEachIndexed { index, id ->
+            val user = (client.getUser(id) as? TdlResult.Success)?.result
+            if (user != null) {
+                val kind = when {
+                    user.type is UserTypeDeleted -> ContactStatusKind.DELETED
+                    user.isContact && !user.isMutualContact -> ContactStatusKind.NOT_IN_THEIR_CONTACTS
+                    else -> ContactStatusKind.OK
+                }
+                result += ContactStatus(id, userDisplayName(user), kind)
+            }
+            onProgress(index + 1, ids.size)
+        }
+        return result
+    }
+
+    private fun userDisplayName(user: User): String {
+        val name = listOf(user.firstName, user.lastName).filter(String::isNotBlank).joinToString(" ")
+        return when {
+            name.isNotBlank() -> name
+            user.usernames?.activeUsernames?.firstOrNull() != null -> "@${user.usernames!!.activeUsernames.first()}"
+            user.phoneNumber.isNotBlank() -> "+${user.phoneNumber}"
+            else -> "ID ${user.id}"
+        }
+    }
 
     /**
      * Loads the full main chat list. TDLib pages chats in via loadChats and
