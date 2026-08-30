@@ -23,6 +23,15 @@ enum class ContactStatusKind { DELETED, NOT_IN_THEIR_CONTACTS, OK }
 
 data class ContactStatus(val userId: Long, val name: String, val kind: ContactStatusKind)
 
+/** One interaction with your own story (a view, optionally with a reaction, or a repost/forward). */
+data class StoryViewerInfo(
+    val storyId: Int,
+    val name: String,
+    val date: Int,
+    val reaction: String?,
+    val kind: String, // "view" | "repost" | "forward"
+)
+
 data class ChatSummary(
     val id: Long,
     val title: String,
@@ -61,6 +70,55 @@ class ChatRepository(private val client: TdlClient) {
         }
         return result
     }
+
+    /**
+     * Fetches viewers of your own currently-active stories: who watched them, when,
+     * and whether they reacted. Empty when you have no active stories.
+     */
+    suspend fun myStoryViewers(): List<StoryViewerInfo> {
+        val me = (client.getMe() as? TdlResult.Success)?.result ?: return emptyList()
+        val active = when (val r = client.getChatActiveStories(me.id)) {
+            is TdlResult.Success -> r.result.stories
+            is TdlResult.Failure -> return emptyList()
+        }
+        val out = ArrayList<StoryViewerInfo>()
+        for (info in active) {
+            var offset = ""
+            var pages = 0
+            while (pages < 20) {
+                pages++
+                val res = when (
+                    val r = client.getStoryInteractions(
+                        storyId = info.storyId,
+                        query = "",
+                        onlyContacts = false,
+                        preferForwards = false,
+                        preferWithReaction = false,
+                        offset = offset,
+                        limit = 100,
+                    )
+                ) {
+                    is TdlResult.Success -> r.result
+                    is TdlResult.Failure -> break
+                }
+                for (i in res.interactions) {
+                    val kind = when (i.type) {
+                        is dev.g000sha256.tdl.dto.StoryInteractionTypeForward -> "forward"
+                        is dev.g000sha256.tdl.dto.StoryInteractionTypeRepost -> "repost"
+                        else -> "view"
+                    }
+                    val reaction = (i.type as? dev.g000sha256.tdl.dto.StoryInteractionTypeView)
+                        ?.chosenReactionType?.let { reactionEmoji(it) }
+                    out += StoryViewerInfo(info.storyId, senderName(i.actorId), i.interactionDate, reaction, kind)
+                }
+                if (res.nextOffset.isEmpty()) break else offset = res.nextOffset
+            }
+        }
+        return out
+    }
+
+    private fun reactionEmoji(type: dev.g000sha256.tdl.dto.ReactionType): String? =
+        (type as? dev.g000sha256.tdl.dto.ReactionTypeEmoji)?.emoji
 
     private fun userDisplayName(user: User): String {
         val name = listOf(user.firstName, user.lastName).filter(String::isNotBlank).joinToString(" ")

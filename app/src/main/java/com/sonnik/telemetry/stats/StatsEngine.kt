@@ -57,6 +57,26 @@ data class SenderStat(val name: String, val messages: Int)
 
 data class WordStat(val text: String, val count: Int)
 
+/**
+ * Conversation analytics computed during a deep scan (mostly meaningful for a
+ * private chat: "me" = outgoing, "them" = incoming).
+ *
+ * @property weekdayCounts messages per weekday, index 0 = Monday .. 6 = Sunday.
+ * @property myReplyAvgSec average time you take to reply to them, seconds (0 = n/a).
+ * @property theirReplyAvgSec average time they take to reply to you, seconds (0 = n/a).
+ * @property myInitiations conversations (after a long gap) started by you.
+ * @property theirInitiations conversations started by them.
+ */
+data class ChatAnalytics(
+    val weekdayCounts: IntArray,
+    val outgoingCount: Int,
+    val incomingCount: Int,
+    val myReplyAvgSec: Long,
+    val theirReplyAvgSec: Long,
+    val myInitiations: Int,
+    val theirInitiations: Int,
+)
+
 data class DeepStats(
     val scannedMessages: Int,
     val textMessages: Int,
@@ -68,6 +88,7 @@ data class DeepStats(
     val topWords: List<WordStat>,
     val topEmoji: List<WordStat>,
     val perDay: Map<LocalDate, Int>,
+    val analytics: ChatAnalytics,
     val firstMessageDate: Int,
     val lastMessageDate: Int,
     val partial: Boolean,
@@ -124,6 +145,15 @@ class StatsEngine(private val client: TdlClient) {
         val perDay = LinkedHashMap<LocalDate, Int>()
         val wordCounts = HashMap<String, Int>()
         val emojiCounts = HashMap<String, Int>()
+        // Conversation analytics accumulators.
+        val weekday = IntArray(7)
+        var outgoing = 0
+        var incoming = 0
+        var myReplyCount = 0; var myReplySum = 0L
+        var theirReplyCount = 0; var theirReplySum = 0L
+        var myInit = 0; var theirInit = 0
+        var newerDate = 0
+        var newerOutgoing: Boolean? = null
         var scanned = 0
         var textMessages = 0
         var textCharacters = 0L
@@ -171,6 +201,23 @@ class StatsEngine(private val client: TdlClient) {
 
                     val day = Instant.ofEpochSecond(message.date.toLong()).atZone(zone).toLocalDate()
                     perDay.merge(day, 1, Int::plus)
+
+                    // Conversation analytics: reason chronologically across the
+                    // newest->oldest walk using the previously seen (newer) message.
+                    weekday[day.dayOfWeek.value - 1]++
+                    if (message.isOutgoing) outgoing++ else incoming++
+                    val prevOutgoing = newerOutgoing
+                    if (prevOutgoing != null) {
+                        val gap = newerDate - message.date
+                        if (prevOutgoing != message.isOutgoing && gap in 1..RESPONSE_MAX_SEC) {
+                            if (prevOutgoing) { myReplyCount++; myReplySum += gap } else { theirReplyCount++; theirReplySum += gap }
+                        }
+                        if (gap > CONV_GAP_SEC) {
+                            if (prevOutgoing) myInit++ else theirInit++
+                        }
+                    }
+                    newerDate = message.date
+                    newerOutgoing = message.isOutgoing
 
                     when (val content = message.content) {
                         is MessageText -> {
@@ -225,6 +272,15 @@ class StatsEngine(private val client: TdlClient) {
             topWords = topWords,
             topEmoji = topEmoji,
             perDay = perDay,
+            analytics = ChatAnalytics(
+                weekdayCounts = weekday,
+                outgoingCount = outgoing,
+                incomingCount = incoming,
+                myReplyAvgSec = if (myReplyCount > 0) myReplySum / myReplyCount else 0,
+                theirReplyAvgSec = if (theirReplyCount > 0) theirReplySum / theirReplyCount else 0,
+                myInitiations = myInit,
+                theirInitiations = theirInit,
+            ),
             firstMessageDate = firstDate,
             lastMessageDate = lastDate,
             partial = partial,
@@ -239,6 +295,11 @@ class StatsEngine(private val client: TdlClient) {
     }
 
     companion object {
+        // A reply counts only if it lands within this window; longer gaps start
+        // a new conversation (used to attribute who initiated it).
+        private const val RESPONSE_MAX_SEC = 6 * 3600
+        private const val CONV_GAP_SEC = 3 * 3600
+
         fun MessageSender.key(): String = when (this) {
             is MessageSenderUser -> "u:$userId"
             is MessageSenderChat -> "c:$chatId"

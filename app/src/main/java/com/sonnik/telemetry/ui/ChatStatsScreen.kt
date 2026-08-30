@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -383,7 +384,59 @@ private fun DeepStatsCards(stats: DeepStats) {
         }
     }
 
+    AnalyticsCard(stats)
+
     CsvExportButton(stats)
+}
+
+@Composable
+private fun AnalyticsCard(stats: DeepStats) {
+    val a = stats.analytics
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Аналитика переписки", style = MaterialTheme.typography.titleMedium)
+            AnalyticsRow("Ваши сообщения", formatCount(a.outgoingCount))
+            AnalyticsRow("Входящие", formatCount(a.incomingCount))
+            AnalyticsRow("Ваше среднее время ответа", formatDurationOrDash(a.myReplyAvgSec))
+            AnalyticsRow("Ответ собеседника (среднее)", formatDurationOrDash(a.theirReplyAvgSec))
+            AnalyticsRow("Кто чаще начинает", "вы ${a.myInitiations} · собеседник ${a.theirInitiations}")
+            HorizontalDivider()
+            Text("Активность по дням недели", style = MaterialTheme.typography.titleSmall)
+            val labels = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+            val maxDay = (a.weekdayCounts.maxOrNull() ?: 0).coerceAtLeast(1)
+            labels.forEachIndexed { i, label ->
+                val count = a.weekdayCounts.getOrElse(i) { 0 }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text(label, modifier = Modifier.width(28.dp), style = MaterialTheme.typography.bodySmall)
+                    LinearProgressIndicator(
+                        progress = { count.toFloat() / maxDay },
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Text(formatCount(count), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalyticsRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun formatDurationOrDash(sec: Long): String {
+    if (sec <= 0) return "—"
+    val h = sec / 3600
+    val m = (sec % 3600) / 60
+    val s = sec % 60
+    return when {
+        h > 0 -> "${h} ч ${m} мин"
+        m > 0 -> "${m} мин"
+        else -> "${s} сек"
+    }
 }
 
 @Composable
