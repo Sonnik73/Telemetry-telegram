@@ -1,6 +1,9 @@
 package com.sonnik.telemetry.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -114,7 +118,7 @@ fun ChatListScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     "Telemetry",
                     style = MaterialTheme.typography.titleLarge,
@@ -245,6 +249,24 @@ fun ChatListScreen(
         },
     ) {
     Scaffold(
+        // Open the drawer with a left-edge swipe (the built-in gesture is often
+        // swallowed by the system back-gesture, so detect it explicitly here).
+        modifier = Modifier.pointerInput(Unit) {
+            val edge = 32.dp.toPx()
+            val trigger = 48.dp.toPx()
+            var startX = 0f
+            var accum = 0f
+            var fired = false
+            detectHorizontalDragGestures(
+                onDragStart = { offset -> startX = offset.x; accum = 0f; fired = false },
+            ) { _, dragAmount ->
+                accum += dragAmount
+                if (!fired && startX <= edge && accum >= trigger && drawerState.isClosed) {
+                    fired = true
+                    scope.launch { drawerState.open() }
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 title = { Text("Чаты") },
