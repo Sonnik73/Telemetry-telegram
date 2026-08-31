@@ -15,9 +15,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.PersonOff
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.QueryStats
@@ -75,6 +80,11 @@ fun ChatListScreen(
     onOpenContactStatus: () -> Unit,
     onOpenStories: () -> Unit,
     onOpenContactStories: () -> Unit,
+    onOpenGraph: () -> Unit,
+    onOpenTyping: () -> Unit,
+    onOpenPhoneLookup: () -> Unit,
+    onOpenLastSeen: () -> Unit,
+    onOpenCleanup: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
@@ -165,6 +175,41 @@ fun ChatListScreen(
                     label = { Text("Истории контактов") },
                     selected = false,
                     onClick = { go(onOpenContactStories) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Hub, contentDescription = null) },
+                    label = { Text("Граф связей") },
+                    selected = false,
+                    onClick = { go(onOpenGraph) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Keyboard, contentDescription = null) },
+                    label = { Text("Кто печатает") },
+                    selected = false,
+                    onClick = { go(onOpenTyping) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Schedule, contentDescription = null) },
+                    label = { Text("Последний онлайн") },
+                    selected = false,
+                    onClick = { go(onOpenLastSeen) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null) },
+                    label = { Text("Поиск по номеру") },
+                    selected = false,
+                    onClick = { go(onOpenPhoneLookup) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null) },
+                    label = { Text("Чистильщик следов") },
+                    selected = false,
+                    onClick = { go(onOpenCleanup) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 )
                 NavigationDrawerItem(

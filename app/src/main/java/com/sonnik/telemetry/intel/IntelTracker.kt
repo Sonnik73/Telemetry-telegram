@@ -12,6 +12,22 @@ import androidx.core.app.NotificationManagerCompat
 import com.sonnik.telemetry.R
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.td.TelegramClient
+import dev.g000sha256.tdl.dto.ChatAction
+import dev.g000sha256.tdl.dto.ChatActionCancel
+import dev.g000sha256.tdl.dto.ChatActionChoosingContact
+import dev.g000sha256.tdl.dto.ChatActionChoosingLocation
+import dev.g000sha256.tdl.dto.ChatActionChoosingSticker
+import dev.g000sha256.tdl.dto.ChatActionRecordingVideo
+import dev.g000sha256.tdl.dto.ChatActionRecordingVideoNote
+import dev.g000sha256.tdl.dto.ChatActionRecordingVoiceNote
+import dev.g000sha256.tdl.dto.ChatActionStartPlayingGame
+import dev.g000sha256.tdl.dto.ChatActionTyping
+import dev.g000sha256.tdl.dto.ChatActionUploadingDocument
+import dev.g000sha256.tdl.dto.ChatActionUploadingPhoto
+import dev.g000sha256.tdl.dto.ChatActionUploadingVideo
+import dev.g000sha256.tdl.dto.ChatActionUploadingVideoNote
+import dev.g000sha256.tdl.dto.ChatActionUploadingVoiceNote
+import dev.g000sha256.tdl.dto.ChatActionWatchingAnimations
 import dev.g000sha256.tdl.dto.Message
 import dev.g000sha256.tdl.dto.MessageAnimation
 import dev.g000sha256.tdl.dto.MessageAudio
@@ -64,6 +80,12 @@ class IntelTracker(
     @Volatile
     private var keywordCache: List<String> = emptyList()
 
+    @Volatile
+    private var myId: Long = 0L
+
+    /** Debounces repeated action updates (same sender+chat+action within a few seconds). */
+    private val typingDedup = HashMap<String, Long>()
+
     /** Keywords tracked in incoming messages across all chats/channels. */
     fun keywords(): List<String> =
         prefs.getStringSet(KEY_KEYWORDS, emptySet())!!.toList().sortedBy { it.lowercase() }
@@ -90,6 +112,23 @@ class IntelTracker(
         keywordCache = keywords()
         ensureChannel()
 
+        scope.launch {
+            myId = (telegram.client.getMe() as? dev.g000sha256.tdl.TdlResult.Success)?.result?.id ?: 0L
+        }
+        scope.launch {
+            telegram.client.chatActionUpdates.collect { update ->
+                val sender = (update.senderId as? MessageSenderUser)?.userId ?: return@collect
+                if (sender == myId) return@collect // ignore my own actions
+                val label = actionLabel(update.action) ?: return@collect
+                val now = System.currentTimeMillis() / 1000
+                val key = "${update.chatId}:$sender:$label"
+                val last = typingDedup[key] ?: 0L
+                if (now - last < TYPING_DEBOUNCE_SEC) return@collect
+                typingDedup[key] = now
+                store.recordTyping(TypingEvent(update.chatId, sender, label, now))
+                bump()
+            }
+        }
         scope.launch {
             telegram.client.newMessageUpdates.collect { update ->
                 val m = update.message
@@ -257,6 +296,26 @@ class IntelTracker(
         }
     }
 
+    /** Human-readable label for a chat action, or null for ones we don't record. */
+    private fun actionLabel(a: ChatAction): String? = when (a) {
+        is ChatActionTyping -> "печатает"
+        is ChatActionRecordingVoiceNote -> "записывает голосовое"
+        is ChatActionRecordingVideoNote -> "записывает кружок"
+        is ChatActionRecordingVideo -> "записывает видео"
+        is ChatActionUploadingPhoto -> "отправляет фото"
+        is ChatActionUploadingVideo -> "отправляет видео"
+        is ChatActionUploadingVoiceNote -> "отправляет голосовое"
+        is ChatActionUploadingVideoNote -> "отправляет кружок"
+        is ChatActionUploadingDocument -> "отправляет файл"
+        is ChatActionChoosingSticker -> "выбирает стикер"
+        is ChatActionChoosingLocation -> "выбирает геопозицию"
+        is ChatActionChoosingContact -> "выбирает контакт"
+        is ChatActionStartPlayingGame -> "играет"
+        is ChatActionWatchingAnimations -> "смотрит анимации"
+        is ChatActionCancel -> null
+        else -> null
+    }
+
     private fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
@@ -274,6 +333,7 @@ class IntelTracker(
         const val KEY_KEYWORDS = "intel_keywords"
         const val CHANNEL_INTEL = "intel_alerts"
         const val CHANNEL_KEYWORD = "keyword_alerts"
+        const val TYPING_DEBOUNCE_SEC = 8L
     }
 }
 

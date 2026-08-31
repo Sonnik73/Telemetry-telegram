@@ -13,9 +13,29 @@ import dev.g000sha256.tdl.dto.MessageSenderChat
 import dev.g000sha256.tdl.dto.MessageSenderUser
 import dev.g000sha256.tdl.dto.StoryContent
 import dev.g000sha256.tdl.dto.User
+import dev.g000sha256.tdl.dto.UserStatus
+import dev.g000sha256.tdl.dto.UserStatusLastMonth
+import dev.g000sha256.tdl.dto.UserStatusLastWeek
+import dev.g000sha256.tdl.dto.UserStatusOffline
+import dev.g000sha256.tdl.dto.UserStatusOnline
+import dev.g000sha256.tdl.dto.UserStatusRecently
 import dev.g000sha256.tdl.dto.UserTypeDeleted
 
 enum class ChatKind { PRIVATE, GROUP, CHANNEL, SECRET }
+
+/** A user matched by phone-number lookup. */
+data class PhoneMatch(val userId: Long, val name: String, val username: String?, val phone: String)
+
+/** Coarse "last seen" bucket for a contact, from their privacy-limited status. */
+enum class SeenKind { ONLINE, OFFLINE, RECENTLY, LAST_WEEK, LAST_MONTH, LONG_AGO }
+
+data class LastSeenEntry(val userId: Long, val name: String, val kind: SeenKind, val wasOnline: Int)
+
+/** A node (contact) in the acquaintance graph, with how many other contacts it links to. */
+data class GraphNode(val userId: Long, val name: String, val degree: Int)
+
+/** Contacts and the edges between those who share at least one common group. */
+data class ContactGraph(val nodes: List<GraphNode>, val edges: List<Pair<Int, Int>>)
 
 /** One active story published by a contact, carrying its full content for download. */
 data class ContactStoryItem(
@@ -169,6 +189,156 @@ class ChatRepository(private val client: TdlClient) {
             onProgress(index + 1, ids.size)
         }
         return groups.sortedByDescending { g -> g.stories.maxOfOrNull { it.date } ?: 0 }
+    }
+
+    /**
+     * Resolves a Telegram account by phone number (server lookup). Returns null when
+     * no account is found or the owner's privacy settings hide them from lookup.
+     */
+    suspend fun lookupByPhone(phone: String): PhoneMatch? {
+        val clean = phone.trim()
+        if (clean.length < 3) return null
+        val user = (client.searchUserByPhoneNumber(clean, false) as? TdlResult.Success)?.result ?: return null
+        return PhoneMatch(
+            user.id,
+            userDisplayName(user),
+            user.usernames?.activeUsernames?.firstOrNull(),
+            user.phoneNumber.ifBlank { clean },
+        )
+    }
+
+    /**
+     * Snapshots the "last seen" status of every contact, sorted most-recent first.
+     * Precise timestamps are only available for contacts who don't hide them.
+     */
+    suspend fun contactsLastSeen(onProgress: (Int, Int) -> Unit): List<LastSeenEntry> {
+        val ids = when (val r = client.getContacts()) {
+            is TdlResult.Success -> r.result.userIds.toList()
+            is TdlResult.Failure -> return emptyList()
+        }
+        val out = ArrayList<LastSeenEntry>()
+        ids.forEachIndexed { index, uid ->
+            val user = (client.getUser(uid) as? TdlResult.Success)?.result
+            if (user != null && user.type !is UserTypeDeleted) {
+                val (kind, was) = classifyStatus(user.status)
+                out += LastSeenEntry(uid, userDisplayName(user), kind, was)
+            }
+            onProgress(index + 1, ids.size)
+        }
+        return out.sortedByDescending { seenRank(it) }
+    }
+
+    private fun classifyStatus(status: UserStatus): Pair<SeenKind, Int> = when (status) {
+        is UserStatusOnline -> SeenKind.ONLINE to 0
+        is UserStatusOffline -> SeenKind.OFFLINE to status.wasOnline
+        is UserStatusRecently -> SeenKind.RECENTLY to 0
+        is UserStatusLastWeek -> SeenKind.LAST_WEEK to 0
+        is UserStatusLastMonth -> SeenKind.LAST_MONTH to 0
+        else -> SeenKind.LONG_AGO to 0
+    }
+
+    private fun seenRank(e: LastSeenEntry): Long = when (e.kind) {
+        SeenKind.ONLINE -> Long.MAX_VALUE
+        SeenKind.OFFLINE -> e.wasOnline.toLong()
+        SeenKind.RECENTLY -> -1L
+        SeenKind.LAST_WEEK -> -2L
+        SeenKind.LAST_MONTH -> -3L
+        SeenKind.LONG_AGO -> -4L
+    }
+
+    /**
+     * Builds an acquaintance graph of your contacts: two contacts are linked when
+     * they share at least one group in common with you. Heavy (a getGroupsInCommon
+     * call per contact), so it reports progress.
+     */
+    suspend fun buildContactGraph(onProgress: (Int, Int) -> Unit): ContactGraph {
+        val ids = when (val r = client.getContacts()) {
+            is TdlResult.Success -> r.result.userIds.toList()
+            is TdlResult.Failure -> return ContactGraph(emptyList(), emptyList())
+        }
+        val userIds = ArrayList<Long>()
+        val names = ArrayList<String>()
+        val groupSets = ArrayList<Set<Long>>()
+        ids.forEachIndexed { index, uid ->
+            val user = (client.getUser(uid) as? TdlResult.Success)?.result
+            if (user != null && user.type !is UserTypeDeleted) {
+                userIds += uid
+                names += userDisplayName(user)
+                groupSets += commonGroupIds(uid)
+            }
+            onProgress(index + 1, ids.size)
+        }
+        val edges = ArrayList<Pair<Int, Int>>()
+        val degree = IntArray(userIds.size)
+        for (i in userIds.indices) {
+            for (j in i + 1 until userIds.size) {
+                if (groupSets[i].isNotEmpty() && groupSets[i].any { it in groupSets[j] }) {
+                    edges += i to j
+                    degree[i]++
+                    degree[j]++
+                }
+            }
+        }
+        val nodes = userIds.indices.map { GraphNode(userIds[it], names[it], degree[it]) }
+        return ContactGraph(nodes, edges)
+    }
+
+    private suspend fun commonGroupIds(userId: Long): Set<Long> {
+        val out = HashSet<Long>()
+        var offset = 0L
+        while (true) {
+            val chats = (client.getGroupsInCommon(userId, offset, 100) as? TdlResult.Success)?.result ?: break
+            if (chats.chatIds.isEmpty()) break
+            chats.chatIds.forEach { out += it }
+            offset = chats.chatIds.last()
+            if (chats.chatIds.size < 100) break
+        }
+        return out
+    }
+
+    /** The signed-in user's own id, or 0 if unavailable. */
+    suspend fun meId(): Long = (client.getMe() as? TdlResult.Success)?.result?.id ?: 0L
+
+    /**
+     * Deletes your own messages in one chat, for everyone. Supergroups/channels use
+     * the server-side bulk delete-by-sender; other chats page through your outgoing
+     * messages and delete them in batches. Returns the number deleted, or -1 when a
+     * bulk delete was issued (exact count unknown). Only ever touches your messages.
+     */
+    suspend fun deleteMyMessages(chatId: Long, onProgress: (Int) -> Unit): Int {
+        val me = meId()
+        if (me == 0L) return 0
+        val chat = (client.getChat(chatId) as? TdlResult.Success)?.result
+        if (chat?.type is ChatTypeSupergroup) {
+            client.deleteChatMessagesBySender(chatId, MessageSenderUser(me))
+            return -1
+        }
+        var deleted = 0
+        var from = 0L
+        while (true) {
+            // Page through the whole history; delete only messages that are actually
+            // outgoing (yours), so this can never touch someone else's messages even
+            // if a sender filter isn't honored for this chat type.
+            val found = (
+                client.searchChatMessages(
+                    chatId = chatId,
+                    query = "",
+                    fromMessageId = from,
+                    offset = 0,
+                    limit = 100,
+                ) as? TdlResult.Success
+                )?.result ?: break
+            if (found.messages.isEmpty()) break
+            val ids = found.messages.filter { it.isOutgoing }.map { it.id }.toLongArray()
+            if (ids.isNotEmpty()) {
+                client.deleteMessages(chatId, ids, revoke = true)
+                deleted += ids.size
+                onProgress(deleted)
+            }
+            from = found.nextFromMessageId
+            if (from == 0L) break
+        }
+        return deleted
     }
 
     private fun userDisplayName(user: User): String {

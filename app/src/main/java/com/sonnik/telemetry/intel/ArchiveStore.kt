@@ -26,6 +26,14 @@ data class KeywordHit(
     val body: String,
 )
 
+/** A caught "typing / recording / uploading" action by a contact in some chat. */
+data class TypingEvent(
+    val chatId: Long,
+    val senderId: Long,
+    val action: String,
+    val at: Long,
+)
+
 /** A recorded change of a contact's profile field. */
 data class ContactChange(
     val userId: Long,
@@ -120,6 +128,42 @@ class ArchiveStore(context: Context) :
         writableDatabase.insert("keyword_hits", null, values)
     }
 
+    /** Lazily creates the typing-events table. */
+    private fun ensureTypingTable() {
+        writableDatabase.execSQL(
+            "CREATE TABLE IF NOT EXISTS typing_events (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "chat_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, action TEXT NOT NULL, at INTEGER NOT NULL)",
+        )
+    }
+
+    fun recordTyping(e: TypingEvent) {
+        ensureTypingTable()
+        val values = ContentValues().apply {
+            put("chat_id", e.chatId)
+            put("sender_id", e.senderId)
+            put("action", e.action)
+            put("at", e.at)
+        }
+        writableDatabase.insert("typing_events", null, values)
+        writableDatabase.execSQL(
+            "DELETE FROM typing_events WHERE id NOT IN (SELECT id FROM typing_events ORDER BY at DESC LIMIT $TYPING_LIMIT)",
+        )
+    }
+
+    fun typingEvents(limit: Int): List<TypingEvent> {
+        ensureTypingTable()
+        val result = ArrayList<TypingEvent>()
+        readableDatabase.rawQuery(
+            "SELECT chat_id, sender_id, action, at FROM typing_events ORDER BY at DESC LIMIT $limit",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += TypingEvent(c.getLong(0), c.getLong(1), c.getString(2), c.getLong(3))
+            }
+        }
+        return result
+    }
+
     fun keywordHits(limit: Int): List<KeywordHit> {
         ensureKeywordTable()
         val result = ArrayList<KeywordHit>()
@@ -204,5 +248,6 @@ class ArchiveStore(context: Context) :
 
     private companion object {
         const val CACHE_LIMIT = 5000
+        const val TYPING_LIMIT = 3000
     }
 }

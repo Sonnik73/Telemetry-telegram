@@ -22,8 +22,13 @@ import com.sonnik.telemetry.ui.BirthdaysScreen
 import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.DossierScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
+import com.sonnik.telemetry.ui.CleanupScreen
+import com.sonnik.telemetry.ui.ContactGraphScreen
 import com.sonnik.telemetry.ui.ContactStatusScreen
 import com.sonnik.telemetry.ui.DialogScreen
+import com.sonnik.telemetry.ui.LastSeenScreen
+import com.sonnik.telemetry.ui.PhoneLookupScreen
+import com.sonnik.telemetry.ui.TypingLogScreen
 import com.sonnik.telemetry.ui.ExportScreen
 import com.sonnik.telemetry.ui.GalleryScreen
 import com.sonnik.telemetry.ui.GlobalSearchScreen
@@ -118,6 +123,11 @@ private fun TelemetryNavHost() {
                 onOpenContactStatus = { navController.navigate("contactstatus") },
                 onOpenStories = { navController.navigate("stories") },
                 onOpenContactStories = { navController.navigate("contactstories") },
+                onOpenGraph = { navController.navigate("graph") },
+                onOpenTyping = { navController.navigate("typinglog") },
+                onOpenPhoneLookup = { navController.navigate("phonelookup") },
+                onOpenLastSeen = { navController.navigate("lastseen") },
+                onOpenCleanup = { navController.navigate("cleanup") },
                 onOpenSettings = { navController.navigate("settings") },
             )
         }
@@ -172,6 +182,30 @@ private fun TelemetryNavHost() {
         }
         composable("contactstories") {
             StoryFeedScreen(onBack = { navController.popBackStack() })
+        }
+        composable("graph") {
+            ContactGraphScreen(onBack = { navController.popBackStack() })
+        }
+        composable("typinglog") {
+            TypingLogScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId/dialog") },
+            )
+        }
+        composable("phonelookup") {
+            PhoneLookupScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
+            )
+        }
+        composable("lastseen") {
+            LastSeenScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
+            )
+        }
+        composable("cleanup") {
+            CleanupScreen(onBack = { navController.popBackStack() })
         }
         composable("search") {
             GlobalSearchScreen(
