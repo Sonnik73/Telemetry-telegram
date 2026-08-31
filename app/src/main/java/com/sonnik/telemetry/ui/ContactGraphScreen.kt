@@ -144,7 +144,9 @@ fun ContactGraphScreen(onBack: () -> Unit) {
                     Canvas(
                         Modifier.fillMaxSize().pointerInput(Unit) {
                             detectTransformGestures { _, panChange, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(0.2f, 6f)
+                                // Effectively unlimited zoom so dense clusters can be
+                                // pulled apart until individual nodes are readable.
+                                scale = (scale * zoom).coerceIn(0.02f, 500f)
                                 pan += panChange
                             }
                         },
