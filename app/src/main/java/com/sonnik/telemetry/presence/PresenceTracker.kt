@@ -121,10 +121,14 @@ class PresenceTracker(
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_SERVICE, "Фоновое отслеживание", NotificationManager.IMPORTANCE_LOW),
         )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_PAUSED, "Отслеживание приостановлено", NotificationManager.IMPORTANCE_DEFAULT),
+        )
     }
 
     companion object {
         const val CHANNEL_ONLINE = "online_alerts"
         const val CHANNEL_SERVICE = "presence_service"
+        const val CHANNEL_PAUSED = "presence_paused"
     }
 }
