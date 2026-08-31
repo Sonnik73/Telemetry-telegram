@@ -39,6 +39,29 @@ class PresenceService : Service() {
         return START_STICKY
     }
 
+    // Android 14 (API 34) caps the cumulative runtime of a dataSync foreground
+    // service (~6 hours per 24h). When the budget is exhausted the system calls
+    // onTimeout and requires us to stop the service within a few seconds, or it
+    // throws ForegroundServiceDidNotStopInTimeException and crashes the app. Stop
+    // the foreground service gracefully here; the in-process collectors keep
+    // running while the process lives, and the service restarts the next time the
+    // app is opened. On Android 15 (API 35) the two-argument overload is invoked.
+    override fun onTimeout(startId: Int) {
+        stopForegroundAndSelf(startId)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForegroundAndSelf(startId)
+    }
+
+    private fun stopForegroundAndSelf(startId: Int) {
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {
+        }
+        stopSelf(startId)
+    }
+
     private fun buildNotification(count: Int): Notification {
         return NotificationCompat.Builder(this, PresenceTracker.CHANNEL_SERVICE)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
