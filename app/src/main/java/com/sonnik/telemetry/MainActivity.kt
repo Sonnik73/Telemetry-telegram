@@ -31,6 +31,7 @@ import com.sonnik.telemetry.ui.KeywordsScreen
 import com.sonnik.telemetry.ui.LockScreen
 import com.sonnik.telemetry.ui.OverviewScreen
 import com.sonnik.telemetry.ui.SettingsScreen
+import com.sonnik.telemetry.ui.StoryFeedScreen
 import com.sonnik.telemetry.ui.StoryViewersScreen
 import com.sonnik.telemetry.ui.GeoScreen
 import com.sonnik.telemetry.ui.GeoMapScreen
@@ -116,6 +117,7 @@ private fun TelemetryNavHost() {
                 onOpenKeywords = { navController.navigate("keywords") },
                 onOpenContactStatus = { navController.navigate("contactstatus") },
                 onOpenStories = { navController.navigate("stories") },
+                onOpenContactStories = { navController.navigate("contactstories") },
                 onOpenSettings = { navController.navigate("settings") },
             )
         }
@@ -167,6 +169,9 @@ private fun TelemetryNavHost() {
         }
         composable("stories") {
             StoryViewersScreen(onBack = { navController.popBackStack() })
+        }
+        composable("contactstories") {
+            StoryFeedScreen(onBack = { navController.popBackStack() })
         }
         composable("search") {
             GlobalSearchScreen(

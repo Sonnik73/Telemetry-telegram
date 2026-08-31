@@ -11,10 +11,27 @@ import dev.g000sha256.tdl.dto.ChatTypeSupergroup
 import dev.g000sha256.tdl.dto.MessageSender
 import dev.g000sha256.tdl.dto.MessageSenderChat
 import dev.g000sha256.tdl.dto.MessageSenderUser
+import dev.g000sha256.tdl.dto.StoryContent
 import dev.g000sha256.tdl.dto.User
 import dev.g000sha256.tdl.dto.UserTypeDeleted
 
 enum class ChatKind { PRIVATE, GROUP, CHANNEL, SECRET }
+
+/** One active story published by a contact, carrying its full content for download. */
+data class ContactStoryItem(
+    val posterChatId: Long,
+    val storyId: Int,
+    val date: Int,
+    val caption: String,
+    val content: StoryContent,
+)
+
+/** A contact who currently has one or more active (not-yet-expired) stories. */
+data class ContactStoryGroup(
+    val chatId: Long,
+    val name: String,
+    val stories: List<ContactStoryItem>,
+)
 
 data class WatchCandidate(val userId: Long, val title: String)
 
@@ -119,6 +136,40 @@ class ChatRepository(private val client: TdlClient) {
 
     private fun reactionEmoji(type: dev.g000sha256.tdl.dto.ReactionType): String? =
         (type as? dev.g000sha256.tdl.dto.ReactionTypeEmoji)?.emoji
+
+    /**
+     * Collects the currently-active stories published by your contacts, with each
+     * story's full content so the UI can preview and download it — including stories
+     * whose author disabled saving (TDLib fetches the media regardless of that flag).
+     * A contact's private chat id equals their user id, so getChatActiveStories is
+     * queried per contact. Stories are only visible until they expire (~24h).
+     */
+    suspend fun contactStories(onProgress: (Int, Int) -> Unit): List<ContactStoryGroup> {
+        val ids = when (val r = client.getContacts()) {
+            is TdlResult.Success -> r.result.userIds.toList()
+            is TdlResult.Failure -> return emptyList()
+        }
+        val groups = ArrayList<ContactStoryGroup>()
+        ids.forEachIndexed { index, uid ->
+            val active = (client.getChatActiveStories(uid) as? TdlResult.Success)?.result
+            val infos = active?.stories.orEmpty()
+            if (infos.isNotEmpty()) {
+                val items = ArrayList<ContactStoryItem>()
+                for (info in infos) {
+                    val story = (client.getStory(uid, info.storyId, false) as? TdlResult.Success)?.result
+                        ?: continue
+                    items += ContactStoryItem(uid, info.storyId, story.date, story.caption.text, story.content)
+                }
+                if (items.isNotEmpty()) {
+                    val user = (client.getUser(uid) as? TdlResult.Success)?.result
+                    val name = user?.let { userDisplayName(it) } ?: "ID $uid"
+                    groups += ContactStoryGroup(uid, name, items)
+                }
+            }
+            onProgress(index + 1, ids.size)
+        }
+        return groups.sortedByDescending { g -> g.stories.maxOfOrNull { it.date } ?: 0 }
+    }
 
     private fun userDisplayName(user: User): String {
         val name = listOf(user.firstName, user.lastName).filter(String::isNotBlank).joinToString(" ")

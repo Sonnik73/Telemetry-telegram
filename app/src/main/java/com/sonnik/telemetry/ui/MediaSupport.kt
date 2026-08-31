@@ -53,6 +53,9 @@ import dev.g000sha256.tdl.dto.MessageSticker
 import dev.g000sha256.tdl.dto.MessageVideo
 import dev.g000sha256.tdl.dto.MessageVideoNote
 import dev.g000sha256.tdl.dto.MessageVoiceNote
+import dev.g000sha256.tdl.dto.StoryContent
+import dev.g000sha256.tdl.dto.StoryContentPhoto
+import dev.g000sha256.tdl.dto.StoryContentVideo
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -125,6 +128,30 @@ fun mediaAttachment(content: MessageContent): MediaAttachment? = when (content) 
         sizeOrExpected(content.document.document.size, content.document.document.expectedSize),
         content.document.thumbnail != null,
     )
+    else -> null
+}
+
+/** Builds a downloadable [MediaAttachment] from a story's content (photo or video). */
+fun storyAttachment(content: StoryContent): MediaAttachment? = when (content) {
+    is StoryContentPhoto -> {
+        val best = content.photo.sizes.filter { it.width in 1..1600 }.maxByOrNull { it.width }
+            ?: content.photo.sizes.maxByOrNull { it.width }
+        best?.let {
+            MediaAttachment(
+                MediaKind.PHOTO, it.photo.id, it.photo.id, content.photo.minithumbnail?.data,
+                "story_${it.photo.id}.jpg", "image/jpeg",
+                sizeOrExpected(it.photo.size, it.photo.expectedSize), true,
+            )
+        }
+    }
+    is StoryContentVideo -> {
+        val v = content.video
+        MediaAttachment(
+            MediaKind.VIDEO, v.video.id, v.thumbnail?.file?.id ?: 0, v.minithumbnail?.data,
+            "story_${v.video.id}.mp4", "video/mp4",
+            sizeOrExpected(v.video.size, v.video.expectedSize), true,
+        )
+    }
     else -> null
 }
 

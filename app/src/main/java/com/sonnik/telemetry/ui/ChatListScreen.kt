@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonOff
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
@@ -73,6 +74,7 @@ fun ChatListScreen(
     onOpenKeywords: () -> Unit,
     onOpenContactStatus: () -> Unit,
     onOpenStories: () -> Unit,
+    onOpenContactStories: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
@@ -156,6 +158,13 @@ fun ChatListScreen(
                     label = { Text("Кто смотрел мои истории") },
                     selected = false,
                     onClick = { go(onOpenStories) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) },
+                    label = { Text("Истории контактов") },
+                    selected = false,
+                    onClick = { go(onOpenContactStories) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 )
                 NavigationDrawerItem(
