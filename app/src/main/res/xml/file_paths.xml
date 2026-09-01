@@ -2,4 +2,6 @@
 <paths>
     <!-- Media copied here from the TDLib cache is shared to external viewers. -->
     <cache-path name="shared_media" path="shared_media/" />
+    <!-- Captured self-destructing media kept in private storage. -->
+    <files-path name="captured" path="captured/" />
 </paths>

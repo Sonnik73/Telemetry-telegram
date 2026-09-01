@@ -19,7 +19,10 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -89,6 +92,9 @@ fun ChatListScreen(
     onOpenPhoneLookup: () -> Unit,
     onOpenLastSeen: () -> Unit,
     onOpenCleanup: () -> Unit,
+    onOpenCaptured: () -> Unit,
+    onOpenCalendar: () -> Unit,
+    onOpenPrivateStats: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
@@ -214,6 +220,27 @@ fun ChatListScreen(
                     label = { Text("Чистильщик следов") },
                     selected = false,
                     onClick = { go(onOpenCleanup) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+                    label = { Text("Перехваченные медиа") },
+                    selected = false,
+                    onClick = { go(onOpenCaptured) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Event, contentDescription = null) },
+                    label = { Text("Календарь из чатов") },
+                    selected = false,
+                    onClick = { go(onOpenCalendar) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Insights, contentDescription = null) },
+                    label = { Text("Статистика личных чатов") },
+                    selected = false,
+                    onClick = { go(onOpenPrivateStats) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 )
                 NavigationDrawerItem(

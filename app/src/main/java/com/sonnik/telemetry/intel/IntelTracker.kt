@@ -41,6 +41,7 @@ import dev.g000sha256.tdl.dto.MessageText
 import dev.g000sha256.tdl.dto.MessageVideo
 import dev.g000sha256.tdl.dto.MessageVideoNote
 import dev.g000sha256.tdl.dto.MessageVoiceNote
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,6 +76,13 @@ class IntelTracker(
 
     fun setAlertsEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_ALERTS, enabled).apply()
+    }
+
+    /** Whether to auto-save incoming self-destructing photos/videos before they vanish. */
+    fun captureEnabled(): Boolean = prefs.getBoolean(KEY_CAPTURE, true)
+
+    fun setCaptureEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CAPTURE, enabled).apply()
     }
 
     @Volatile
@@ -134,6 +142,7 @@ class IntelTracker(
                 val m = update.message
                 store.cache(m.chatId, m.id, senderId(m), m.date, messageBody(m.content))
                 matchKeywords(m)
+                captureSelfDestruct(m)
             }
         }
         scope.launch {
@@ -256,6 +265,74 @@ class IntelTracker(
         notifyKeyword(hit, senderId(m), m.chatId, snippet)
     }
 
+    /**
+     * Captures an incoming self-destructing photo/video/voice by downloading it and
+     * copying it into private app storage before Telegram deletes it.
+     */
+    private suspend fun captureSelfDestruct(m: Message) {
+        if (!captureEnabled()) return
+        if (m.selfDestructType == null || m.isOutgoing) return
+        val target = selfDestructFile(m.content) ?: return
+        val (fileId, type, ext) = target
+        val local = downloadToPath(fileId) ?: return
+        val dir = File(context.filesDir, "captured").apply { mkdirs() }
+        val out = File(dir, "cap_${m.chatId}_${m.id}_$fileId.$ext")
+        val ok = runCatching {
+            File(local).inputStream().use { input -> out.outputStream().use { input.copyTo(it) } }
+        }.isSuccess
+        if (!ok) return
+        store.recordCaptured(
+            m.chatId, senderId(m), System.currentTimeMillis() / 1000, type, out.absolutePath, rawText(m.content),
+        )
+        bump()
+        notifyCaptured(senderId(m), m.chatId, type)
+    }
+
+    private fun selfDestructFile(content: MessageContent): Triple<Int, String, String>? = when (content) {
+        is MessagePhoto -> content.photo.sizes.maxByOrNull { it.width }?.photo?.id?.let { Triple(it, "photo", "jpg") }
+        is MessageVideo -> Triple(content.video.video.id, "video", "mp4")
+        is MessageVoiceNote -> Triple(content.voiceNote.voice.id, "voice", "ogg")
+        is MessageVideoNote -> Triple(content.videoNote.video.id, "videonote", "mp4")
+        is MessageAnimation -> Triple(content.animation.animation.id, "gif", "mp4")
+        else -> null
+    }
+
+    private suspend fun downloadToPath(fileId: Int): String? {
+        val result = telegram.client.downloadFile(fileId, priority = 32, offset = 0, limit = 0, synchronous = true)
+        val file = (result as? dev.g000sha256.tdl.TdlResult.Success)?.result ?: return null
+        return if (file.local.isDownloadingCompleted && file.local.path.isNotEmpty()) file.local.path else null
+    }
+
+    private suspend fun notifyCaptured(senderId: Long, chatId: Long, type: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val chats = TelemetryApp.instance.chats
+        val sender = runCatching {
+            chats.senderName(
+                if (senderId > 0) MessageSenderUser(senderId) else MessageSenderChat(senderId),
+            )
+        }.getOrNull() ?: "Контакт"
+        val what = when (type) {
+            "video" -> "видео"
+            "voice" -> "голосовое"
+            "videonote" -> "кружок"
+            "gif" -> "GIF"
+            else -> "фото"
+        }
+        val notification = NotificationCompat.Builder(context, CHANNEL_INTEL)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("📸 Перехвачено одноразовое $what")
+            .setContentText("от $sender")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(nextNotificationId(), notification) }
+    }
+
     private fun rawText(content: MessageContent): String = when (content) {
         is MessageText -> content.text.text
         is MessagePhoto -> content.caption.text
@@ -330,6 +407,7 @@ class IntelTracker(
 
     private companion object {
         const val KEY_ALERTS = "intel_alerts"
+        const val KEY_CAPTURE = "intel_capture"
         const val KEY_KEYWORDS = "intel_keywords"
         const val CHANNEL_INTEL = "intel_alerts"
         const val CHANNEL_KEYWORD = "keyword_alerts"

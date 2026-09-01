@@ -21,9 +21,12 @@ import com.sonnik.telemetry.ui.AuthScreen
 import com.sonnik.telemetry.ui.BirthdaysScreen
 import com.sonnik.telemetry.ui.ChatListScreen
 import com.sonnik.telemetry.ui.DossierScreen
+import com.sonnik.telemetry.ui.CalendarScreen
+import com.sonnik.telemetry.ui.CapturedMediaScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.CleanupScreen
 import com.sonnik.telemetry.ui.ContactGraphScreen
+import com.sonnik.telemetry.ui.PrivateStatsScreen
 import com.sonnik.telemetry.ui.ContactStatusScreen
 import com.sonnik.telemetry.ui.DialogScreen
 import com.sonnik.telemetry.ui.LastSeenScreen
@@ -128,6 +131,9 @@ private fun TelemetryNavHost() {
                 onOpenPhoneLookup = { navController.navigate("phonelookup") },
                 onOpenLastSeen = { navController.navigate("lastseen") },
                 onOpenCleanup = { navController.navigate("cleanup") },
+                onOpenCaptured = { navController.navigate("captured") },
+                onOpenCalendar = { navController.navigate("calendar") },
+                onOpenPrivateStats = { navController.navigate("privatestats") },
                 onOpenSettings = { navController.navigate("settings") },
             )
         }
@@ -206,6 +212,21 @@ private fun TelemetryNavHost() {
         }
         composable("cleanup") {
             CleanupScreen(onBack = { navController.popBackStack() })
+        }
+        composable("captured") {
+            CapturedMediaScreen(onBack = { navController.popBackStack() })
+        }
+        composable("calendar") {
+            CalendarScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId/dialog") },
+            )
+        }
+        composable("privatestats") {
+            PrivateStatsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate("chat/$chatId") },
+            )
         }
         composable("search") {
             GlobalSearchScreen(

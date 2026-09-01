@@ -34,6 +34,20 @@ data class TypingEvent(
     val at: Long,
 )
 
+/** A self-destructing media message that was captured (copied) before it vanished. */
+data class CapturedMedia(
+    val id: Long,
+    val chatId: Long,
+    val senderId: Long,
+    val at: Long,
+    val type: String, // "photo" | "video" | "voice" | "videonote" | "gif"
+    val path: String,
+    val caption: String,
+)
+
+/** A recently cached message row (for local event/date extraction). */
+data class CachedRow(val chatId: Long, val senderId: Long, val date: Int, val body: String)
+
 /** A recorded change of a contact's profile field. */
 data class ContactChange(
     val userId: Long,
@@ -234,6 +248,58 @@ class ArchiveStore(context: Context) :
         ).use { c ->
             while (c.moveToNext()) {
                 result += ContactChange(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4))
+            }
+        }
+        return result
+    }
+
+    /** Most recent cached messages, newest first — used for local date/event extraction. */
+    fun recentCached(limit: Int): List<CachedRow> {
+        val result = ArrayList<CachedRow>()
+        readableDatabase.rawQuery(
+            "SELECT chat_id, sender_id, date, body FROM cached ORDER BY date DESC LIMIT $limit",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += CachedRow(c.getLong(0), c.getLong(1), c.getInt(2), c.getString(3))
+            }
+        }
+        return result
+    }
+
+    private fun ensureCapturedTable() {
+        writableDatabase.execSQL(
+            "CREATE TABLE IF NOT EXISTS captured_media (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "chat_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, at INTEGER NOT NULL, " +
+                "type TEXT NOT NULL, path TEXT NOT NULL, caption TEXT NOT NULL)",
+        )
+    }
+
+    fun recordCaptured(chatId: Long, senderId: Long, at: Long, type: String, path: String, caption: String) {
+        ensureCapturedTable()
+        val values = ContentValues().apply {
+            put("chat_id", chatId)
+            put("sender_id", senderId)
+            put("at", at)
+            put("type", type)
+            put("path", path)
+            put("caption", caption)
+        }
+        writableDatabase.insert("captured_media", null, values)
+    }
+
+    fun capturedMedia(limit: Int): List<CapturedMedia> {
+        ensureCapturedTable()
+        val result = ArrayList<CapturedMedia>()
+        readableDatabase.rawQuery(
+            "SELECT id, chat_id, sender_id, at, type, path, caption FROM captured_media ORDER BY at DESC LIMIT $limit",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += CapturedMedia(
+                    c.getLong(0), c.getLong(1), c.getLong(2), c.getLong(3),
+                    c.getString(4), c.getString(5), c.getString(6),
+                )
             }
         }
         return result
