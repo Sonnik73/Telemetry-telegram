@@ -63,7 +63,6 @@ private data class CapturedRow(
 @Composable
 fun CapturedMediaScreen(onBack: () -> Unit) {
     val app = TelemetryApp.instance
-    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
     var rows by remember { mutableStateOf<List<CapturedRow>?>(null) }
@@ -140,9 +139,7 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(data.size) { index ->
-                        CapturedCard(data[index]) { path, type ->
-                            openCaptured(context, path, mimeFor(type))
-                        }
+                        CapturedCard(data[index])
                     }
                 }
             }
@@ -151,27 +148,59 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun CapturedCard(row: CapturedRow, onOpen: (String, String) -> Unit) {
+private fun CapturedCard(row: CapturedRow) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var bitmap by remember(row.path) { mutableStateOf<ImageBitmap?>(null) }
     var saved by remember(row.path) { mutableStateOf(false) }
 
+    val encrypted = row.path.endsWith(".enc")
+
     LaunchedEffect(row.path) {
         if (row.type == "photo") {
-            bitmap = withContext(Dispatchers.IO) { decodeFile(row.path) }
+            bitmap = withContext(Dispatchers.IO) {
+                if (encrypted) {
+                    val tmp = File(context.cacheDir, "cap_prev_${row.id}")
+                    runCatching {
+                        com.sonnik.telemetry.security.FileCrypto.decryptToFile(context, File(row.path), tmp)
+                        decodeFile(tmp.absolutePath)
+                    }.getOrNull().also { tmp.delete() }
+                } else {
+                    decodeFile(row.path)
+                }
+            }
+        }
+    }
+
+    fun open() {
+        scope.launch {
+            val f = withContext(Dispatchers.IO) { sharePlainFile(context, row) } ?: return@launch
+            runCatching {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f)
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mimeFor(row.type))
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                )
+            }
         }
     }
 
     val mime = mimeFor(row.type)
-    val defaultName = File(row.path).name
+    val defaultName = File(row.path).name.removeSuffix(".enc")
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mime)) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             saved = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.openOutputStream(uri)?.use { out ->
-                        File(row.path).inputStream().use { it.copyTo(out) }
+                        if (encrypted) {
+                            com.sonnik.telemetry.security.FileCrypto.decryptToStream(context, File(row.path), out)
+                        } else {
+                            File(row.path).inputStream().use { it.copyTo(out) }
+                        }
                     }
                 }.isSuccess
             }
@@ -190,13 +219,13 @@ private fun CapturedCard(row: CapturedRow, onOpen: (String, String) -> Unit) {
                 Image(
                     bitmap = bitmap!!,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(8.dp)).clickable { onOpen(row.path, row.type) },
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(8.dp)).clickable { open() },
                     contentScale = ContentScale.Fit,
                 )
             }
             if (row.caption.isNotBlank()) Text(row.caption, style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onOpen(row.path, row.type) }) {
+                IconButton(onClick = { open() }) {
                     Icon(Icons.Default.OpenInNew, contentDescription = "Открыть")
                 }
                 IconButton(onClick = { saveLauncher.launch(defaultName) }) {
@@ -222,15 +251,17 @@ private fun typeLabel(type: String): String = when (type) {
     else -> "🖼 Фото (одноразовое)"
 }
 
-private fun openCaptured(context: android.content.Context, path: String, mime: String) {
-    runCatching {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, mime)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-        )
-    }
+/** Prepares a decrypted (or copied) plaintext file in the shared cache for viewing. */
+private fun sharePlainFile(context: android.content.Context, row: CapturedRow): File? {
+    val dir = File(context.cacheDir, "shared_media").apply { mkdirs() }
+    val name = File(row.path).name.removeSuffix(".enc")
+    val out = File(dir, name)
+    return runCatching {
+        if (row.path.endsWith(".enc")) {
+            com.sonnik.telemetry.security.FileCrypto.decryptToFile(context, File(row.path), out)
+        } else {
+            File(row.path).inputStream().use { i -> out.outputStream().use { i.copyTo(it) } }
+            out
+        }
+    }.getOrNull()
 }

@@ -276,9 +276,11 @@ class IntelTracker(
         val (fileId, type, ext) = target
         val local = downloadToPath(fileId) ?: return
         val dir = File(context.filesDir, "captured").apply { mkdirs() }
-        val out = File(dir, "cap_${m.chatId}_${m.id}_$fileId.$ext")
+        // Store encrypted at rest (".enc"); the inner extension is kept so the type
+        // and a sensible filename can be restored when opening/saving.
+        val out = File(dir, "cap_${m.chatId}_${m.id}_$fileId.$ext.enc")
         val ok = runCatching {
-            File(local).inputStream().use { input -> out.outputStream().use { input.copyTo(it) } }
+            com.sonnik.telemetry.security.FileCrypto.encryptFile(context, File(local), out)
         }.isSuccess
         if (!ok) return
         store.recordCaptured(
