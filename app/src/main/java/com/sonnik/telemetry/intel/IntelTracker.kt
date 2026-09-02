@@ -85,6 +85,21 @@ class IntelTracker(
         prefs.edit().putBoolean(KEY_CAPTURE, enabled).apply()
     }
 
+    /** Days to keep captured media; 0 means keep forever. */
+    fun captureRetentionDays(): Int = prefs.getInt(KEY_CAPTURE_DAYS, 0)
+
+    fun setCaptureRetentionDays(days: Int) {
+        prefs.edit().putInt(KEY_CAPTURE_DAYS, days).apply()
+        pruneCaptured()
+    }
+
+    /** Applies the retention policy, if one is set. */
+    fun pruneCaptured() {
+        val days = captureRetentionDays()
+        if (days <= 0) return
+        store.deleteCapturedOlderThan(System.currentTimeMillis() / 1000 - days * 86_400L)
+    }
+
     @Volatile
     private var keywordCache: List<String> = emptyList()
 
@@ -286,6 +301,7 @@ class IntelTracker(
         store.recordCaptured(
             m.chatId, senderId(m), System.currentTimeMillis() / 1000, type, out.absolutePath, rawText(m.content),
         )
+        pruneCaptured()
         bump()
         notifyCaptured(senderId(m), m.chatId, type)
     }
@@ -410,6 +426,7 @@ class IntelTracker(
     private companion object {
         const val KEY_ALERTS = "intel_alerts"
         const val KEY_CAPTURE = "intel_capture"
+        const val KEY_CAPTURE_DAYS = "intel_capture_days"
         const val KEY_KEYWORDS = "intel_keywords"
         const val CHANNEL_INTEL = "intel_alerts"
         const val CHANNEL_KEYWORD = "keyword_alerts"

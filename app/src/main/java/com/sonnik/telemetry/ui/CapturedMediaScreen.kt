@@ -17,9 +17,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,10 +71,14 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
 
     var rows by remember { mutableStateOf<List<CapturedRow>?>(null) }
     var enabled by remember { mutableStateOf(app.intel.captureEnabled()) }
+    var retention by remember { mutableStateOf(app.intel.captureRetentionDays()) }
+    var totalBytes by remember { mutableStateOf(0L) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     fun load() {
         scope.launch {
-            val items = app.intel.store.capturedMedia(500)
+            val items = withContext(Dispatchers.IO) { app.intel.store.capturedMedia(500) }
+            totalBytes = withContext(Dispatchers.IO) { app.intel.store.capturedBytes() }
             val nameCache = HashMap<Long, String>()
             rows = items.map { m ->
                 val name = nameCache.getOrPut(m.senderId) {
@@ -82,6 +90,13 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
                 }
                 CapturedRow(m.id, m.type, m.path, m.caption, m.at, name)
             }
+        }
+    }
+
+    fun deleteOne(id: Long) {
+        scope.launch {
+            withContext(Dispatchers.IO) { app.intel.store.deleteCaptured(id) }
+            load()
         }
     }
 
@@ -117,6 +132,23 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
+        if (confirmClear) {
+            AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("Удалить все перехваченные медиа?") },
+                text = { Text("Файлы будут стёрты с устройства безвозвратно.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmClear = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) { app.intel.store.clearCaptured() }
+                            load()
+                        }
+                    }) { Text("Удалить") }
+                },
+                dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } },
+            )
+        }
         Column(Modifier.fillMaxSize().padding(padding)) {
             val data = rows
             when {
@@ -138,8 +170,43 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "Перехвачено: ${data.size} · занято ${humanBytes(totalBytes)}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                Text(
+                                    "Хранить:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(0 to "всегда", 7 to "7 дней", 30 to "30 дней").forEach { (days, label) ->
+                                        FilterChip(
+                                            selected = retention == days,
+                                            onClick = {
+                                                retention = days
+                                                app.intel.setCaptureRetentionDays(days)
+                                                load()
+                                            },
+                                            label = { Text(label) },
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = { confirmClear = true }) {
+                                    Text("Очистить всё", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
                     items(data.size) { index ->
-                        CapturedCard(data[index])
+                        val row = data[index]
+                        CapturedCard(row) { deleteOne(row.id) }
                     }
                 }
             }
@@ -148,7 +215,7 @@ fun CapturedMediaScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun CapturedCard(row: CapturedRow) {
+private fun CapturedCard(row: CapturedRow, onDelete: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var bitmap by remember(row.path) { mutableStateOf<ImageBitmap?>(null) }
@@ -231,10 +298,25 @@ private fun CapturedCard(row: CapturedRow) {
                 IconButton(onClick = { saveLauncher.launch(defaultName) }) {
                     Icon(Icons.Default.Download, contentDescription = "Сохранить")
                 }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)
+                }
                 if (saved) Text("сохранено", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
+}
+
+private fun humanBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes Б"
+    val units = arrayOf("КБ", "МБ", "ГБ")
+    var value = bytes.toDouble()
+    var index = -1
+    while (value >= 1024 && index < units.size - 1) {
+        value /= 1024
+        index++
+    }
+    return String.format(java.util.Locale.US, "%.1f %s", value, units[index])
 }
 
 private fun mimeFor(type: String): String = when (type) {

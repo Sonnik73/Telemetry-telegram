@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.io.File
 
 /** A caught deletion or edit of a message. */
 data class ArchiveEvent(
@@ -303,6 +304,51 @@ class ArchiveStore(context: Context) :
             }
         }
         return result
+    }
+
+    /** Total bytes occupied by captured media still present on disk. */
+    fun capturedBytes(): Long {
+        ensureCapturedTable()
+        var total = 0L
+        readableDatabase.rawQuery("SELECT path FROM captured_media", null).use { c ->
+            while (c.moveToNext()) total += File(c.getString(0)).length()
+        }
+        return total
+    }
+
+    /** Deletes one captured item, file included. */
+    fun deleteCaptured(id: Long) {
+        ensureCapturedTable()
+        readableDatabase.rawQuery("SELECT path FROM captured_media WHERE id=?", arrayOf(id.toString())).use { c ->
+            if (c.moveToNext()) runCatching { File(c.getString(0)).delete() }
+        }
+        writableDatabase.delete("captured_media", "id=?", arrayOf(id.toString()))
+    }
+
+    /** Deletes every captured item and its file. Returns how many were removed. */
+    fun clearCaptured(): Int {
+        ensureCapturedTable()
+        var count = 0
+        readableDatabase.rawQuery("SELECT path FROM captured_media", null).use { c ->
+            while (c.moveToNext()) {
+                runCatching { File(c.getString(0)).delete() }
+                count++
+            }
+        }
+        writableDatabase.delete("captured_media", null, null)
+        return count
+    }
+
+    /** Drops captured items older than [cutoffEpochSeconds] (retention policy). */
+    fun deleteCapturedOlderThan(cutoffEpochSeconds: Long) {
+        ensureCapturedTable()
+        readableDatabase.rawQuery(
+            "SELECT path FROM captured_media WHERE at < ?",
+            arrayOf(cutoffEpochSeconds.toString()),
+        ).use { c ->
+            while (c.moveToNext()) runCatching { File(c.getString(0)).delete() }
+        }
+        writableDatabase.delete("captured_media", "at < ?", arrayOf(cutoffEpochSeconds.toString()))
     }
 
     /** Keeps the message cache bounded so it can't grow without limit. */

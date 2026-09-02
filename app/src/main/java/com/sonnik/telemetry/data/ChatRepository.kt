@@ -305,11 +305,36 @@ class ChatRepository(private val client: TdlClient) {
      * messages and delete them in batches. Returns the number deleted, or -1 when a
      * bulk delete was issued (exact count unknown). Only ever touches your messages.
      */
-    suspend fun deleteMyMessages(chatId: Long, onProgress: (Int) -> Unit): Int {
+    /**
+     * Server-side estimate of how many messages in [chatId] are yours, so the UI can
+     * show what a cleanup would remove before doing it. Null when unavailable.
+     */
+    suspend fun countMyMessages(chatId: Long): Int? {
+        val me = meId()
+        if (me == 0L) return null
+        val found = (
+            client.searchChatMessages(
+                chatId = chatId,
+                query = "",
+                senderId = MessageSenderUser(me),
+                fromMessageId = 0,
+                offset = 0,
+                limit = 1,
+            ) as? TdlResult.Success
+            )?.result ?: return null
+        return found.totalCount
+    }
+
+    /**
+     * Deletes your own messages in [chatId]. When [olderThanDate] is set, only
+     * messages sent before that unix time are removed (which forces the paged path,
+     * since the server-side bulk delete cannot filter by date).
+     */
+    suspend fun deleteMyMessages(chatId: Long, olderThanDate: Int? = null, onProgress: (Int) -> Unit): Int {
         val me = meId()
         if (me == 0L) return 0
         val chat = (client.getChat(chatId) as? TdlResult.Success)?.result
-        if (chat?.type is ChatTypeSupergroup) {
+        if (chat?.type is ChatTypeSupergroup && olderThanDate == null) {
             client.deleteChatMessagesBySender(chatId, MessageSenderUser(me))
             return -1
         }
@@ -329,7 +354,10 @@ class ChatRepository(private val client: TdlClient) {
                 ) as? TdlResult.Success
                 )?.result ?: break
             if (found.messages.isEmpty()) break
-            val ids = found.messages.filter { it.isOutgoing }.map { it.id }.toLongArray()
+            val ids = found.messages
+                .filter { it.isOutgoing && (olderThanDate == null || it.date < olderThanDate) }
+                .map { it.id }
+                .toLongArray()
             if (ids.isNotEmpty()) {
                 client.deleteMessages(chatId, ids, revoke = true)
                 deleted += ids.size

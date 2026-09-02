@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +53,20 @@ fun CleanupScreen(onBack: () -> Unit) {
     var running by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf<ConfirmTarget?>(null) }
+    var beforeDate by remember { mutableStateOf("") }
+    var preview by remember { mutableStateOf<String?>(null) }
+
+    // Parses the optional "delete only before this date" field (дд.мм.гггг).
+    fun cutoffDate(): Int? {
+        val text = beforeDate.trim()
+        if (text.isBlank()) return null
+        return runCatching {
+            val parts = text.split(".", "-", "/")
+            val cal = java.util.Calendar.getInstance()
+            cal.set(parts[2].toInt(), parts[1].toInt() - 1, parts[0].toInt(), 0, 0, 0)
+            (cal.timeInMillis / 1000).toInt()
+        }.getOrNull()
+    }
 
     LaunchedEffect(Unit) {
         chats = app.chats.loadAllChats().getOrNull().orEmpty()
@@ -61,7 +76,7 @@ fun CleanupScreen(onBack: () -> Unit) {
         running = true
         status = "Удаляю мои сообщения в «${chat.title}»…"
         scope.launch {
-            val n = app.chats.deleteMyMessages(chat.id) { done -> status = "Удалено: $done…" }
+            val n = app.chats.deleteMyMessages(chat.id, cutoffDate()) { done -> status = "Удалено: $done…" }
             running = false
             status = if (n < 0) "Готово: удаление отправлено на сервер." else "Готово: удалено сообщений — $n."
         }
@@ -75,7 +90,7 @@ fun CleanupScreen(onBack: () -> Unit) {
             var totalDeleted = 0
             all.forEachIndexed { index, c ->
                 status = "(${index + 1}/${all.size}) «${c.title}»… всего удалено: $totalDeleted"
-                val n = app.chats.deleteMyMessages(c.id) { }
+                val n = app.chats.deleteMyMessages(c.id, cutoffDate()) { }
                 if (n > 0) totalDeleted += n
             }
             running = false
@@ -116,6 +131,27 @@ fun CleanupScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            OutlinedTextField(
+                value = beforeDate,
+                onValueChange = { beforeDate = it },
+                label = { Text("Удалять только старше даты (необязательно)") },
+                placeholder = { Text("дд.мм.гггг") },
+                singleLine = true,
+                enabled = !running,
+                supportingText = {
+                    Text(
+                        if (beforeDate.isBlank()) {
+                            "Пусто — удалять всю переписку."
+                        } else if (cutoffDate() == null) {
+                            "Не разобрал дату — укажите в формате дд.мм.гггг."
+                        } else {
+                            "Будут удалены сообщения раньше этой даты."
+                        },
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("В одном чате", fontWeight = FontWeight.SemiBold)
@@ -127,10 +163,26 @@ fun CleanupScreen(onBack: () -> Unit) {
                             chats.orEmpty().forEach { c ->
                                 DropdownMenuItem(
                                     text = { Text(c.title + kindSuffix(c.kind)) },
-                                    onClick = { selected = c; menuOpen = false },
+                                    onClick = {
+                                        selected = c
+                                        menuOpen = false
+                                        preview = null
+                                        scope.launch {
+                                            preview = "Считаю…"
+                                            val n = app.chats.countMyMessages(c.id)
+                                            preview = if (n == null) {
+                                                "Не удалось посчитать — сервер не отдаёт счётчик."
+                                            } else {
+                                                "Ваших сообщений в этом чате: ≈$n"
+                                            }
+                                        }
+                                    },
                                 )
                             }
                         }
+                    }
+                    preview?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Button(
                         onClick = { selected?.let { confirm = ConfirmTarget.One(it) } },
@@ -170,11 +222,14 @@ fun CleanupScreen(onBack: () -> Unit) {
 
     val target = confirm
     if (target != null) {
+        val scope2 = if (cutoffDate() != null) " Только сообщения раньше ${beforeDate.trim()}." else ""
         val (title, body) = when (target) {
             is ConfirmTarget.One -> "Удалить в «${target.chat.title}»?" to
-                "Все ваши сообщения в этом чате будут удалены у всех. Отменить нельзя."
+                ("Ваши сообщения в этом чате будут удалены у всех.$scope2 Отменить нельзя." +
+                    (preview?.let { "\n\n$it" } ?: ""))
             ConfirmTarget.All -> "Удалить во всех чатах?" to
-                "Все ваши сообщения во всех чатах будут удалены у всех. Это необратимо и может занять много времени."
+                "Ваши сообщения во всех чатах будут удалены у всех.$scope2 " +
+                "Это необратимо и может занять много времени."
         }
         AlertDialog(
             onDismissRequest = { confirm = null },
