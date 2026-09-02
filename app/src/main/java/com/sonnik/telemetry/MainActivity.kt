@@ -25,6 +25,7 @@ import com.sonnik.telemetry.ui.CalendarScreen
 import com.sonnik.telemetry.ui.CapturedMediaScreen
 import com.sonnik.telemetry.ui.ChatStatsScreen
 import com.sonnik.telemetry.ui.CleanupScreen
+import com.sonnik.telemetry.ui.CoPresenceScreen
 import com.sonnik.telemetry.ui.ContactGraphScreen
 import com.sonnik.telemetry.ui.PrivateStatsScreen
 import com.sonnik.telemetry.ui.ContactStatusScreen
@@ -153,6 +154,7 @@ private fun TelemetryNavHost() {
                 onOpenCaptured = { navController.navigate("captured") },
                 onOpenCalendar = { navController.navigate("calendar") },
                 onOpenPrivateStats = { navController.navigate("privatestats") },
+                onOpenCoPresence = { navController.navigate("copresence") },
                 onOpenSettings = { navController.navigate("settings") },
             )
         }
@@ -228,6 +230,9 @@ private fun TelemetryNavHost() {
                 onBack = { navController.popBackStack() },
                 onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
             )
+        }
+        composable("copresence") {
+            CoPresenceScreen(onBack = { navController.popBackStack() })
         }
         composable("cleanup") {
             CleanupScreen(onBack = { navController.popBackStack() })

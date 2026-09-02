@@ -228,7 +228,7 @@ class ChatRepository(private val client: TdlClient) {
         return out.sortedByDescending { seenRank(it) }
     }
 
-    private fun classifyStatus(status: UserStatus): Pair<SeenKind, Int> = when (status) {
+    fun classifyStatus(status: UserStatus): Pair<SeenKind, Int> = when (status) {
         is UserStatusOnline -> SeenKind.ONLINE to 0
         is UserStatusOffline -> SeenKind.OFFLINE to status.wasOnline
         is UserStatusRecently -> SeenKind.RECENTLY to 0

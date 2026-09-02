@@ -41,7 +41,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Locale
 
 private data class TrackerStats(
     val title: String,
@@ -234,12 +233,3 @@ private fun computeStats(userId: Long): TrackerStats {
     )
 }
 
-private fun formatDuration(seconds: Long): String {
-    if (seconds <= 0) return "0 м"
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    return when {
-        h > 0 -> String.format(Locale.US, "%d ч %02d м", h, m)
-        else -> "$m м"
-    }
-}

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -25,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +44,10 @@ import androidx.compose.foundation.clickable
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.LastSeenEntry
 import com.sonnik.telemetry.data.SeenKind
+import com.sonnik.telemetry.presence.PresenceAnalysis
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +59,9 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
     var entries by remember { mutableStateOf<List<LastSeenEntry>?>(null) }
     var done by remember { mutableIntStateOf(0) }
     var total by remember { mutableIntStateOf(0) }
+    var onlyOnline by remember { mutableStateOf(false) }
+    // Best hours to reach a contact, for those tracked by the presence tracker.
+    var bestHours by remember { mutableStateOf<Map<Long, List<Int>>>(emptyMap()) }
 
     fun load() {
         if (loading) return
@@ -62,7 +70,28 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
         total = 0
         scope.launch {
             entries = app.chats.contactsLastSeen { d, t -> done = d; total = t }
+            bestHours = withContext(Dispatchers.IO) {
+                val since = System.currentTimeMillis() / 1000 - 7 * 24 * 3600
+                app.presence.store.watchedUsers().associate { user ->
+                    val sessions = runCatching { app.presence.store.sessions(user.userId, since) }
+                        .getOrDefault(emptyList())
+                    user.userId to PresenceAnalysis.profile(sessions).bestHours(2)
+                }
+            }
             loading = false
+        }
+    }
+
+    // Keep the list live: TDLib pushes status changes as they happen.
+    LaunchedEffect(Unit) {
+        app.telegram.client.userStatusUpdates.collect { update ->
+            val current = entries ?: return@collect
+            val index = current.indexOfFirst { it.userId == update.userId }
+            if (index < 0) return@collect
+            val (kind, was) = app.chats.classifyStatus(update.status)
+            entries = current.toMutableList().also {
+                it[index] = it[index].copy(kind = kind, wasOnline = was)
+            }
         }
     }
 
@@ -114,18 +143,30 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                 }
                 else -> {
                     val online = entries!!.count { it.kind == SeenKind.ONLINE }
+                    val shown = if (onlyOnline) entries!!.filter { it.kind == SeenKind.ONLINE } else entries!!
                     LazyColumn(
                         modifier = Modifier.fillMaxSize().padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         item {
-                            Text(
-                                "Контактов: ${entries!!.size} · сейчас в сети: $online",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "Контактов: ${entries!!.size} · в сети: $online",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                FilterChip(
+                                    selected = onlyOnline,
+                                    onClick = { onlyOnline = !onlyOnline },
+                                    label = { Text("только в сети") },
+                                )
+                            }
                         }
-                        items(entries!!, key = { it.userId }) { e ->
+                        items(shown, key = { it.userId }) { e ->
                             Card(Modifier.fillMaxWidth()) {
                                 Row(
                                     Modifier.fillMaxWidth()
@@ -139,7 +180,16 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                                             Modifier.size(10.dp).clip(CircleShape)
                                                 .background(if (e.kind == SeenKind.ONLINE) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outlineVariant),
                                         )
-                                        Text(e.name, fontWeight = FontWeight.Medium)
+                                        Column {
+                                            Text(e.name, fontWeight = FontWeight.Medium)
+                                            bestHours[e.userId]?.takeIf { it.isNotEmpty() }?.let { hours ->
+                                                Text(
+                                                    "обычно в сети: " + hours.joinToString(", ") { "%02d:00".format(it) },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
                                     }
                                     Text(
                                         lastSeenLabel(e),

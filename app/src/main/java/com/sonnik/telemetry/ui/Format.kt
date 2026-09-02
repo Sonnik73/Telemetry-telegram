@@ -28,3 +28,11 @@ fun formatDateTime(unixSeconds: Int): String {
     if (unixSeconds <= 0) return "—"
     return SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(unixSeconds * 1000L))
 }
+
+/** Human duration in hours/minutes, e.g. "3 ч 07 м" or "12 м". */
+fun formatDuration(seconds: Long): String {
+    if (seconds <= 0) return "0 м"
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    return if (h > 0) String.format(Locale.US, "%d ч %02d м", h, m) else "$m м"
+}

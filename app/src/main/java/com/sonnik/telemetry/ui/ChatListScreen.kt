@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.PersonOff
@@ -95,6 +96,7 @@ fun ChatListScreen(
     onOpenCaptured: () -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenPrivateStats: () -> Unit,
+    onOpenCoPresence: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val repository = TelemetryApp.instance.chats
@@ -234,6 +236,13 @@ fun ChatListScreen(
                     label = { Text("Календарь из чатов") },
                     selected = false,
                     onClick = { go(onOpenCalendar) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.GroupWork, contentDescription = null) },
+                    label = { Text("Со-присутствие") },
+                    selected = false,
+                    onClick = { go(onOpenCoPresence) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 )
                 NavigationDrawerItem(

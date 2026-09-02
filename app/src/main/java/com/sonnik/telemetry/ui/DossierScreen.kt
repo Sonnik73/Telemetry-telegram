@@ -49,6 +49,13 @@ private data class Dossier(
     val lastSeen: Int,
     val changes: List<ContactChange>,
     val events: List<ArchiveEvent>,
+    // Everything else the app has collected about this person.
+    val capturedCount: Int,
+    val typingCount: Int,
+    val lastTyping: com.sonnik.telemetry.intel.TypingEvent?,
+    val onlineSeconds: Long,
+    val onlineSessions: Int,
+    val bestHours: List<Int>,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,6 +71,11 @@ fun DossierScreen(userId: Long, onBack: () -> Unit) {
         val photos = (client.getUserProfilePhotos(userId, 0, 1) as? TdlResult.Success)?.result
         val birth = full?.birthdate
         val presence = app.presence.store.watchedUsers().firstOrNull { it.userId == userId }
+        val typing = app.intel.store.typingSummary(userId)
+        // Presence profile over the last week, if this contact is tracked.
+        val weekAgo = System.currentTimeMillis() / 1000 - 7 * 24 * 3600
+        val sessions = runCatching { app.presence.store.sessions(userId, weekAgo) }.getOrDefault(emptyList())
+        val profile = com.sonnik.telemetry.presence.PresenceAnalysis.profile(sessions)
         dossier = Dossier(
             name = user?.let { listOf(it.firstName, it.lastName).filter(String::isNotBlank).joinToString(" ") }?.ifBlank { "ID $userId" } ?: "ID $userId",
             username = user?.usernames?.activeUsernames?.firstOrNull()?.let { "@$it" } ?: "",
@@ -77,6 +89,12 @@ fun DossierScreen(userId: Long, onBack: () -> Unit) {
             lastSeen = presence?.lastSeen ?: 0,
             changes = app.intel.store.contactChanges(userId, 50),
             events = app.intel.store.events(limit = 50, userId = userId),
+            capturedCount = app.intel.store.capturedCountBySender(userId),
+            typingCount = typing.first,
+            lastTyping = typing.second,
+            onlineSeconds = profile.totalSeconds,
+            onlineSessions = profile.sessionCount,
+            bestHours = profile.bestHours(),
         )
     }
 
@@ -127,6 +145,31 @@ fun DossierScreen(userId: Long, onBack: () -> Unit) {
                             else -> "нет данных (добавьте в онлайн-трекер)"
                         },
                     )
+                }
+            }
+
+            // Everything the app's own collectors have gathered about this person.
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Собрано приложением", style = MaterialTheme.typography.titleMedium)
+                    Info("Перехвачено одноразовых медиа", d.capturedCount.toString())
+                    Info("Пойманных удалений/правок", d.events.size.toString())
+                    Info("Смен профиля в журнале", d.changes.size.toString())
+                    Info(
+                        "Событий «печатает»",
+                        if (d.typingCount == 0) "0" else "${d.typingCount} · последнее: " +
+                            "${d.lastTyping?.action ?: ""} ${d.lastTyping?.let { formatDateTime(it.at.toInt()) } ?: ""}",
+                    )
+                    if (d.onlineSessions > 0) {
+                        Info("В сети за 7 дней", formatDuration(d.onlineSeconds))
+                        Info("Сессий онлайн", d.onlineSessions.toString())
+                        if (d.bestHours.isNotEmpty()) {
+                            Info(
+                                "Лучшее время написать",
+                                d.bestHours.joinToString(", ") { "%02d:00–%02d:00".format(it, (it + 1) % 24) },
+                            )
+                        }
+                    }
                 }
             }
 

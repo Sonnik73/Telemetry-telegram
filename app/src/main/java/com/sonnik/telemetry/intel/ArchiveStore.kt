@@ -306,6 +306,33 @@ class ArchiveStore(context: Context) :
         return result
     }
 
+    /** How many one-time media were captured from this sender. */
+    fun capturedCountBySender(userId: Long): Int {
+        ensureCapturedTable()
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM captured_media WHERE sender_id=?",
+            arrayOf(userId.toString()),
+        ).use { c -> return if (c.moveToNext()) c.getInt(0) else 0 }
+    }
+
+    /** Typing/recording events caught from this sender: total count and the latest one. */
+    fun typingSummary(userId: Long): Pair<Int, TypingEvent?> {
+        ensureTypingTable()
+        var count = 0
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM typing_events WHERE sender_id=?",
+            arrayOf(userId.toString()),
+        ).use { c -> if (c.moveToNext()) count = c.getInt(0) }
+        var last: TypingEvent? = null
+        readableDatabase.rawQuery(
+            "SELECT chat_id, sender_id, action, at FROM typing_events WHERE sender_id=? ORDER BY at DESC LIMIT 1",
+            arrayOf(userId.toString()),
+        ).use { c ->
+            if (c.moveToNext()) last = TypingEvent(c.getLong(0), c.getLong(1), c.getString(2), c.getLong(3))
+        }
+        return count to last
+    }
+
     /** Total bytes occupied by captured media still present on disk. */
     fun capturedBytes(): Long {
         ensureCapturedTable()
