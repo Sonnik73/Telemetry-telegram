@@ -55,6 +55,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Drop plaintext scratch copies left behind by external viewers in the
+        // previous session, so decrypted media never outlives the session that
+        // opened it. Done at start (not on stop) so an open viewer keeps working.
+        com.sonnik.telemetry.security.SecureCache.wipeSharedMedia(this)
         locked.value = TelemetryApp.instance.lock.isEnabled()
         setContent {
             TelemetryTheme {

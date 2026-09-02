@@ -52,4 +52,22 @@ object FileCrypto {
         dst.outputStream().use { decryptToStream(context, enc, it) }
         return dst
     }
+
+    /** Encrypts a small in-memory blob as IV + ciphertext. */
+    fun encryptBytes(context: Context, data: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key(context))
+        return cipher.iv + cipher.doFinal(data)
+    }
+
+    /** Reverses [encryptBytes]. */
+    fun decryptBytes(context: Context, data: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            key(context),
+            GCMParameterSpec(128, data.copyOfRange(0, IV_LEN)),
+        )
+        return cipher.doFinal(data.copyOfRange(IV_LEN, data.size))
+    }
 }

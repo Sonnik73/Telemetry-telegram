@@ -41,6 +41,15 @@ fun LockScreen(onUnlocked: () -> Unit) {
     val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    var lockoutMs by remember { mutableStateOf(app.lock.lockoutRemainingMs()) }
+
+    // Tick down the brute-force lockout so the button re-enables on its own.
+    LaunchedEffect(lockoutMs > 0) {
+        while (lockoutMs > 0) {
+            kotlinx.coroutines.delay(1000)
+            lockoutMs = app.lock.lockoutRemainingMs()
+        }
+    }
 
     val canBiometric = remember {
         BiometricManager.from(context).canAuthenticate(
@@ -93,14 +102,26 @@ fun LockScreen(onUnlocked: () -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             modifier = Modifier.fillMaxWidth(),
         )
-        if (error) {
+        if (lockoutMs > 0) {
+            Text(
+                "Слишком много попыток. Повторите через ${formatLockout(lockoutMs)}.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        } else if (error) {
             Text("Неверный PIN", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
         }
         Button(
             onClick = {
-                if (app.lock.check(pin)) onUnlocked() else { error = true; pin = "" }
+                if (app.lock.check(pin)) {
+                    onUnlocked()
+                } else {
+                    error = true
+                    pin = ""
+                    lockoutMs = app.lock.lockoutRemainingMs()
+                }
             },
-            enabled = pin.length >= 4,
+            enabled = pin.length >= 4 && lockoutMs == 0L,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Войти")
@@ -112,4 +133,9 @@ fun LockScreen(onUnlocked: () -> Unit) {
             }
         }
     }
+}
+
+private fun formatLockout(ms: Long): String {
+    val seconds = (ms + 999) / 1000
+    return if (seconds < 60) "$seconds с" else "${seconds / 60} мин ${seconds % 60} с"
 }

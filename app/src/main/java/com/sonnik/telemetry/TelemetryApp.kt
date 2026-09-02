@@ -46,7 +46,13 @@ class TelemetryApp : Application() {
         MediaAutoDownloader(this, telegram, MediaAutoStore(this))
     }
 
+    // Crash reports can quote TDLib errors and paths, so they are stored encrypted
+    // like everything else at rest. The old plaintext file is still read once (and
+    // removed) so a crash recorded before this change isn't lost.
     private val crashFile: File
+        get() = File(filesDir, "last_crash.enc")
+
+    private val legacyCrashFile: File
         get() = File(filesDir, "last_crash.txt")
 
     override fun onCreate() {
@@ -63,16 +69,33 @@ class TelemetryApp : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching {
                 val stamp = SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.US).format(Date())
-                crashFile.writeText("$stamp · поток ${thread.name}\n\n${Log.getStackTraceString(throwable)}")
+                val text = "$stamp · поток ${thread.name}\n\n${Log.getStackTraceString(throwable)}"
+                crashFile.writeBytes(
+                    com.sonnik.telemetry.security.FileCrypto.encryptBytes(this, text.toByteArray()),
+                )
             }
             previous?.uncaughtException(thread, throwable)
         }
     }
 
-    fun readLastCrash(): String? = crashFile.takeIf { it.exists() }?.readText()
+    fun readLastCrash(): String? {
+        if (crashFile.exists()) {
+            return runCatching {
+                String(com.sonnik.telemetry.security.FileCrypto.decryptBytes(this, crashFile.readBytes()))
+            }.getOrNull()
+        }
+        // One-time read of a report written before crash logs were encrypted.
+        if (legacyCrashFile.exists()) {
+            val text = runCatching { legacyCrashFile.readText() }.getOrNull()
+            legacyCrashFile.delete()
+            return text
+        }
+        return null
+    }
 
     fun clearLastCrash() {
         crashFile.delete()
+        legacyCrashFile.delete()
     }
 
     companion object {
