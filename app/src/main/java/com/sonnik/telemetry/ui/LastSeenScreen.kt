@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,6 +44,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.LastSeenEntry
+import com.sonnik.telemetry.data.ScanCache
 import com.sonnik.telemetry.data.SeenKind
 import com.sonnik.telemetry.presence.PresenceAnalysis
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +62,7 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
     var done by remember { mutableIntStateOf(0) }
     var total by remember { mutableIntStateOf(0) }
     var onlyOnline by remember { mutableStateOf(false) }
+    var cacheTime by remember { mutableLongStateOf(0L) }
     // Best hours to reach a contact, for those tracked by the presence tracker.
     var bestHours by remember { mutableStateOf<Map<Long, List<Int>>>(emptyMap()) }
 
@@ -70,6 +73,9 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
         total = 0
         scope.launch {
             entries = app.chats.contactsLastSeen { d, t -> done = d; total = t }
+            ScanCache.lastSeen = entries
+            ScanCache.lastSeenTime = System.currentTimeMillis()
+            cacheTime = ScanCache.lastSeenTime
             bestHours = withContext(Dispatchers.IO) {
                 val since = System.currentTimeMillis() / 1000 - 7 * 24 * 3600
                 app.presence.store.watchedUsers().associate { user ->
@@ -79,6 +85,27 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                 }
             }
             loading = false
+        }
+    }
+
+    // Show the last scan immediately on entry; refresh re-polls.
+    LaunchedEffect(Unit) {
+        if (entries == null) {
+            val cached = ScanCache.lastSeen
+            if (cached != null) {
+                entries = cached
+                cacheTime = ScanCache.lastSeenTime
+                bestHours = withContext(Dispatchers.IO) {
+                    val since = System.currentTimeMillis() / 1000 - 7 * 24 * 3600
+                    app.presence.store.watchedUsers().associate { user ->
+                        val sessions = runCatching { app.presence.store.sessions(user.userId, since) }
+                            .getOrDefault(emptyList())
+                        user.userId to PresenceAnalysis.profile(sessions).bestHours(2)
+                    }
+                }
+            } else {
+                load()
+            }
         }
     }
 
@@ -155,7 +182,11 @@ fun LastSeenScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "Контактов: ${entries!!.size} · в сети: $online",
+                                    buildString {
+                                        append("Контактов: ${entries!!.size} · в сети: $online")
+                                        val age = ScanCache.ageLabel(cacheTime)
+                                        if (age.isNotEmpty()) append(" · $age")
+                                    },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

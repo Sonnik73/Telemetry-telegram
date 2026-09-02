@@ -14,8 +14,8 @@ android {
         applicationId = "com.sonnik.telemetry"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "2.9.0"
+        versionCode = 21
+        versionName = "2.10.0"
         // Ship only ARM (real phones); x86/x86_64 are emulator-only and roughly
         // double the APK with TDLib's native libs.
         ndk {

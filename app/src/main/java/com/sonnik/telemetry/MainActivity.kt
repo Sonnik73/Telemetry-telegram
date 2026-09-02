@@ -114,7 +114,9 @@ private fun TelemetryNavHost() {
                 app.mediaAuto.start()
                 if (app.presence.store.watchedIds().isNotEmpty() ||
                     app.mediaAuto.store.anyEnabled() ||
-                    app.intel.keywords().isNotEmpty()
+                    app.intel.keywords().isNotEmpty() ||
+                    app.intel.storyAutoUsers().isNotEmpty() ||
+                    app.intel.calendarReminders()
                 ) {
                     app.presence.start()
                     com.sonnik.telemetry.presence.PresenceService.start(context)

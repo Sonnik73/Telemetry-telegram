@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +49,8 @@ fun StoryFeedScreen(onBack: () -> Unit) {
     var groups by remember { mutableStateOf<List<ContactStoryGroup>?>(null) }
     var done by remember { mutableIntStateOf(0) }
     var total by remember { mutableIntStateOf(0) }
+    var autoUsers by remember { mutableStateOf(app.intel.storyAutoUsers()) }
+    val archivedCount = remember { mutableStateOf(0) }
 
     fun load() {
         if (loading) return
@@ -55,6 +59,7 @@ fun StoryFeedScreen(onBack: () -> Unit) {
         total = 0
         scope.launch {
             groups = app.chats.contactStories { d, t -> done = d; total = t }
+            archivedCount.value = app.intel.store.archivedStoryCount()
             loading = false
         }
     }
@@ -73,10 +78,10 @@ fun StoryFeedScreen(onBack: () -> Unit) {
                         "Истории контактов",
                         listOf(
                             "Показывает активные истории ваших контактов и позволяет скачать фото/видео из них.",
-                            "Сохранение работает и для историй, в которых автор запретил пересылку — приложение скачивает медиа напрямую через TDLib.",
-                            "Истории видны, только пока не истекли (обычно 24 часа).",
+                            "Сохранение работает и для историй, в которых автор запретил пересылку.",
+                            "🔔 — автоархив: приложение будет периодически проверять истории этого контакта и сохранять их зашифрованно, плюс пришлёт push «выложил(а) историю».",
+                            "Сохранённые истории: ${archivedCount.value}.",
                             "Просмотр здесь не помечает историю как «просмотренную» у автора.",
-                            "Нажмите «Обновить», чтобы опросить контакты заново.",
                         ),
                     )
                     IconButton(onClick = { load() }, enabled = !loading) {
@@ -137,12 +142,26 @@ fun StoryFeedScreen(onBack: () -> Unit) {
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text(group.name, fontWeight = FontWeight.SemiBold)
-                                        Text(
-                                            "историй: ${group.stories.size}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                        Text(group.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(
+                                                "историй: ${group.stories.size}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            val isAuto = group.chatId in autoUsers
+                                            IconButton(onClick = {
+                                                if (isAuto) app.intel.removeStoryAutoUser(group.chatId)
+                                                else app.intel.addStoryAutoUser(group.chatId)
+                                                autoUsers = app.intel.storyAutoUsers()
+                                            }) {
+                                                Icon(
+                                                    if (isAuto) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                                                    contentDescription = if (isAuto) "Автоархив вкл" else "Автоархив выкл",
+                                                    tint = if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
                                     }
                                     for (story in group.stories) {
                                         val att = storyAttachment(story.content)

@@ -24,9 +24,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,6 +44,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ContactGraph
+import com.sonnik.telemetry.data.ScanCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +78,7 @@ fun ContactGraphScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
     var clusters by remember { mutableStateOf<IntArray?>(null) }
     var done by remember { mutableIntStateOf(0) }
     var total by remember { mutableIntStateOf(0) }
+    var cacheTime by remember { mutableLongStateOf(0L) }
 
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -95,7 +99,25 @@ fun ContactGraphScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
             graph = g
             layout = pos
             clusters = comp
+            ScanCache.graph = g
+            ScanCache.graphTime = System.currentTimeMillis()
+            cacheTime = ScanCache.graphTime
             loading = false
+        }
+    }
+
+    // Show cached graph immediately on entry; only auto-build if nothing is cached.
+    LaunchedEffect(Unit) {
+        val cached = ScanCache.graph
+        if (cached != null) {
+            val pos = withContext(Dispatchers.Default) { computeLayout(cached) }
+            val comp = withContext(Dispatchers.Default) { computeClusters(cached) }
+            graph = cached
+            layout = pos
+            clusters = comp
+            cacheTime = ScanCache.graphTime
+        } else {
+            load()
         }
     }
 
@@ -192,7 +214,11 @@ fun ContactGraphScreen(onBack: () -> Unit, onOpenDossier: (Long) -> Unit) {
                             )
                         }
                         Text(
-                            "Контактов: ${g.nodes.size} · связей: ${g.edges.size}",
+                            buildString {
+                                append("Контактов: ${g.nodes.size} · связей: ${g.edges.size}")
+                                val age = ScanCache.ageLabel(cacheTime)
+                                if (age.isNotEmpty()) append(" · обновлено $age")
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 12.dp),

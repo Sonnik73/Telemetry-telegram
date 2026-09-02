@@ -49,6 +49,29 @@ data class CapturedMedia(
 /** A recently cached message row (for local event/date extraction). */
 data class CachedRow(val chatId: Long, val senderId: Long, val date: Int, val body: String)
 
+/** A stored calendar event parsed from a chat message. */
+data class CalendarEvent(
+    val id: Long,
+    val chatId: Long,
+    val senderId: Long,
+    val messageId: Long,
+    val eventEpoch: Long,
+    val hasTime: Boolean,
+    val snippet: String,
+    val reminded: Boolean,
+)
+
+/** A story saved by the auto-archive background scanner. */
+data class ArchivedStory(
+    val id: Long,
+    val userId: Long,
+    val storyId: Int,
+    val at: Long,
+    val type: String,
+    val path: String,
+    val caption: String,
+)
+
 /** A recorded change of a contact's profile field. */
 data class ContactChange(
     val userId: Long,
@@ -376,6 +399,146 @@ class ArchiveStore(context: Context) :
             while (c.moveToNext()) runCatching { File(c.getString(0)).delete() }
         }
         writableDatabase.delete("captured_media", "at < ?", arrayOf(cutoffEpochSeconds.toString()))
+    }
+
+    // ── Calendar events ──────────────────────────────────────────────────
+
+    private fun ensureCalendarTable() {
+        writableDatabase.execSQL(
+            "CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "chat_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, message_id INTEGER NOT NULL, " +
+                "event_epoch INTEGER NOT NULL, has_time INTEGER NOT NULL, snippet TEXT NOT NULL, " +
+                "reminded INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, " +
+                "UNIQUE(chat_id, message_id))",
+        )
+    }
+
+    fun recordCalendarEvent(chatId: Long, senderId: Long, messageId: Long, eventEpoch: Long, hasTime: Boolean, snippet: String) {
+        ensureCalendarTable()
+        val values = ContentValues().apply {
+            put("chat_id", chatId)
+            put("sender_id", senderId)
+            put("message_id", messageId)
+            put("event_epoch", eventEpoch)
+            put("has_time", if (hasTime) 1 else 0)
+            put("snippet", snippet.take(200))
+            put("reminded", 0)
+            put("created_at", System.currentTimeMillis() / 1000)
+        }
+        writableDatabase.insertWithOnConflict("calendar_events", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    fun calendarEvents(futureOnly: Boolean = true): List<CalendarEvent> {
+        ensureCalendarTable()
+        val cutoff = if (futureOnly) System.currentTimeMillis() / 1000 - 86400 else 0L
+        val where = if (futureOnly) "WHERE event_epoch > $cutoff" else ""
+        val result = ArrayList<CalendarEvent>()
+        readableDatabase.rawQuery(
+            "SELECT id, chat_id, sender_id, message_id, event_epoch, has_time, snippet, reminded " +
+                "FROM calendar_events $where ORDER BY event_epoch ASC",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += CalendarEvent(
+                    c.getLong(0), c.getLong(1), c.getLong(2), c.getLong(3),
+                    c.getLong(4), c.getInt(5) != 0, c.getString(6), c.getInt(7) != 0,
+                )
+            }
+        }
+        return result
+    }
+
+    fun unremindedEvents(beforeEpoch: Long): List<CalendarEvent> {
+        ensureCalendarTable()
+        val now = System.currentTimeMillis() / 1000
+        val result = ArrayList<CalendarEvent>()
+        readableDatabase.rawQuery(
+            "SELECT id, chat_id, sender_id, message_id, event_epoch, has_time, snippet, reminded " +
+                "FROM calendar_events WHERE reminded=0 AND event_epoch > ? AND event_epoch <= ? ORDER BY event_epoch ASC",
+            arrayOf(now.toString(), beforeEpoch.toString()),
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += CalendarEvent(
+                    c.getLong(0), c.getLong(1), c.getLong(2), c.getLong(3),
+                    c.getLong(4), c.getInt(5) != 0, c.getString(6), c.getInt(7) != 0,
+                )
+            }
+        }
+        return result
+    }
+
+    fun markReminded(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        ensureCalendarTable()
+        val placeholders = ids.joinToString(",") { "?" }
+        writableDatabase.execSQL(
+            "UPDATE calendar_events SET reminded=1 WHERE id IN ($placeholders)",
+            ids.map { it.toString() }.toTypedArray(),
+        )
+    }
+
+    fun clearOldEvents() {
+        ensureCalendarTable()
+        val cutoff = System.currentTimeMillis() / 1000 - 30 * 86400L
+        writableDatabase.delete("calendar_events", "event_epoch < ?", arrayOf(cutoff.toString()))
+    }
+
+    // ── Archived stories ────────────────────────────────────────────────
+
+    private fun ensureArchivedStoriesTable() {
+        writableDatabase.execSQL(
+            "CREATE TABLE IF NOT EXISTS archived_stories (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "user_id INTEGER NOT NULL, story_id INTEGER NOT NULL, at INTEGER NOT NULL, " +
+                "type TEXT NOT NULL, path TEXT NOT NULL, caption TEXT NOT NULL, " +
+                "UNIQUE(user_id, story_id))",
+        )
+    }
+
+    fun recordArchivedStory(userId: Long, storyId: Int, at: Long, type: String, path: String, caption: String) {
+        ensureArchivedStoriesTable()
+        val values = ContentValues().apply {
+            put("user_id", userId)
+            put("story_id", storyId)
+            put("at", at)
+            put("type", type)
+            put("path", path)
+            put("caption", caption)
+        }
+        writableDatabase.insertWithOnConflict("archived_stories", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    fun isStoryArchived(userId: Long, storyId: Int): Boolean {
+        ensureArchivedStoriesTable()
+        return readableDatabase.rawQuery(
+            "SELECT 1 FROM archived_stories WHERE user_id=? AND story_id=?",
+            arrayOf(userId.toString(), storyId.toString()),
+        ).use { it.moveToNext() }
+    }
+
+    fun archivedStories(userId: Long? = null, limit: Int = 200): List<ArchivedStory> {
+        ensureArchivedStoriesTable()
+        val where = if (userId != null) "WHERE user_id=?" else ""
+        val args = if (userId != null) arrayOf(userId.toString()) else null
+        val result = ArrayList<ArchivedStory>()
+        readableDatabase.rawQuery(
+            "SELECT id, user_id, story_id, at, type, path, caption FROM archived_stories $where ORDER BY at DESC LIMIT $limit",
+            args,
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += ArchivedStory(
+                    c.getLong(0), c.getLong(1), c.getInt(2), c.getLong(3),
+                    c.getString(4), c.getString(5), c.getString(6),
+                )
+            }
+        }
+        return result
+    }
+
+    fun archivedStoryCount(): Int {
+        ensureArchivedStoriesTable()
+        return readableDatabase.rawQuery("SELECT COUNT(*) FROM archived_stories", null).use { c ->
+            if (c.moveToNext()) c.getInt(0) else 0
+        }
     }
 
     /** Keeps the message cache bounded so it can't grow without limit. */

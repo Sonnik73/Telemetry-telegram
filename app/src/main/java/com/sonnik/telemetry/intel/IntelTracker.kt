@@ -41,10 +41,14 @@ import dev.g000sha256.tdl.dto.MessageText
 import dev.g000sha256.tdl.dto.MessageVideo
 import dev.g000sha256.tdl.dto.MessageVideoNote
 import dev.g000sha256.tdl.dto.MessageVoiceNote
+import dev.g000sha256.tdl.TdlResult
+import dev.g000sha256.tdl.dto.StoryContentPhoto
+import dev.g000sha256.tdl.dto.StoryContentVideo
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -116,6 +120,9 @@ class IntelTracker(
 
     @Volatile
     private var typingAlertCache: Set<Long> = emptySet()
+
+    @Volatile
+    private var storyAutoCache: Set<Long> = emptySet()
 
     @Volatile
     private var myId: Long = 0L
@@ -197,6 +204,29 @@ class IntelTracker(
         typingAlertCache = typingAlertUsers()
     }
 
+    fun storyAutoUsers(): Set<Long> =
+        prefs.getStringSet(KEY_STORY_AUTO, emptySet())!!.mapNotNull { it.toLongOrNull() }.toSet()
+
+    fun addStoryAutoUser(userId: Long) {
+        val set = prefs.getStringSet(KEY_STORY_AUTO, emptySet())!!.toMutableSet()
+        set.add(userId.toString())
+        prefs.edit().putStringSet(KEY_STORY_AUTO, set).apply()
+        storyAutoCache = storyAutoUsers()
+    }
+
+    fun removeStoryAutoUser(userId: Long) {
+        val set = prefs.getStringSet(KEY_STORY_AUTO, emptySet())!!.toMutableSet()
+        set.remove(userId.toString())
+        prefs.edit().putStringSet(KEY_STORY_AUTO, set).apply()
+        storyAutoCache = storyAutoUsers()
+    }
+
+    fun calendarReminders(): Boolean = prefs.getBoolean(KEY_CALENDAR_REMIND, false)
+
+    fun setCalendarReminders(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CALENDAR_REMIND, enabled).apply()
+    }
+
     fun start() {
         if (started) return
         started = true
@@ -205,11 +235,14 @@ class IntelTracker(
         chatFilterCache = keywordChatFilter()
         wholeWordCache = wholeWordMode()
         typingAlertCache = typingAlertUsers()
+        storyAutoCache = storyAutoUsers()
         ensureChannel()
 
         scope.launch {
-            myId = (telegram.client.getMe() as? dev.g000sha256.tdl.TdlResult.Success)?.result?.id ?: 0L
+            myId = (telegram.client.getMe() as? TdlResult.Success)?.result?.id ?: 0L
         }
+        scope.launch { storyAutoArchiveLoop() }
+        scope.launch { calendarReminderLoop() }
         scope.launch {
             telegram.client.chatActionUpdates.collect { update ->
                 val sender = (update.senderId as? MessageSenderUser)?.userId ?: return@collect
@@ -499,6 +532,108 @@ class IntelTracker(
         runCatching { NotificationManagerCompat.from(context).notify(nextNotificationId(), notification) }
     }
 
+    private suspend fun storyAutoArchiveLoop() {
+        delay(60_000)
+        while (true) {
+            runCatching { archiveStories() }
+            delay(30 * 60_000L)
+        }
+    }
+
+    private suspend fun archiveStories() {
+        val users = storyAutoCache
+        if (users.isEmpty()) return
+        for (uid in users) {
+            val active = (telegram.client.getChatActiveStories(uid) as? TdlResult.Success)?.result
+            val infos = active?.stories.orEmpty()
+            for (info in infos) {
+                if (store.isStoryArchived(uid, info.storyId)) continue
+                val story = (telegram.client.getStory(uid, info.storyId, false) as? TdlResult.Success)?.result
+                    ?: continue
+                val (fileId, type, ext) = storyFileInfo(story.content) ?: continue
+                val local = downloadToPath(fileId) ?: continue
+                val dir = File(context.filesDir, "stories").apply { mkdirs() }
+                val out = File(dir, "story_${uid}_${info.storyId}.$ext.enc")
+                val ok = runCatching {
+                    com.sonnik.telemetry.security.FileCrypto.encryptFile(context, File(local), out)
+                }.isSuccess
+                if (!ok) continue
+                store.recordArchivedStory(uid, info.storyId, story.date.toLong(), type, out.absolutePath, story.caption.text)
+                bump()
+                notifyStory(uid, type)
+            }
+        }
+    }
+
+    private fun storyFileInfo(content: dev.g000sha256.tdl.dto.StoryContent): Triple<Int, String, String>? =
+        when (content) {
+            is StoryContentPhoto -> {
+                val best = content.photo.sizes.maxByOrNull { it.width }
+                best?.let { Triple(it.photo.id, "photo", "jpg") }
+            }
+            is StoryContentVideo -> Triple(content.video.video.id, "video", "mp4")
+            else -> null
+        }
+
+    private suspend fun notifyStory(userId: Long, type: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+        val chats = TelemetryApp.instance.chats
+        val name = runCatching { chats.senderName(MessageSenderUser(userId)) }.getOrNull() ?: "Контакт"
+        val what = if (type == "video") "видео-историю" else "историю"
+        val notification = NotificationCompat.Builder(context, CHANNEL_STORY)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("📖 $name выложил(а) $what")
+            .setContentText("История сохранена автоматически")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(nextNotificationId(), notification) }
+    }
+
+    private suspend fun calendarReminderLoop() {
+        delay(120_000)
+        while (true) {
+            if (calendarReminders()) {
+                runCatching { checkCalendarReminders() }
+            }
+            store.clearOldEvents()
+            delay(15 * 60_000L)
+        }
+    }
+
+    private suspend fun checkCalendarReminders() {
+        val oneHourAhead = System.currentTimeMillis() / 1000 + 3600
+        val events = store.unremindedEvents(oneHourAhead)
+        if (events.isEmpty()) return
+        val chats = TelemetryApp.instance.chats
+        val reminded = ArrayList<Long>()
+        for (e in events) {
+            val chatName = runCatching { chats.getChat(e.chatId)?.title }.getOrNull() ?: "чат"
+            notifyCalendarReminder(e, chatName)
+            reminded += e.id
+        }
+        store.markReminded(reminded)
+    }
+
+    private fun notifyCalendarReminder(event: CalendarEvent, chatName: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_CALENDAR)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("📅 Скоро событие")
+            .setContentText(event.snippet.take(100))
+            .setStyle(NotificationCompat.BigTextStyle().bigText("${event.snippet}\n\n💬 $chatName"))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(nextNotificationId(), notification) }
+    }
+
     private fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
@@ -509,6 +644,12 @@ class IntelTracker(
         )
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_TYPING, "Печатает — уведомления", NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_STORY, "Истории контактов", NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_CALENDAR, "Напоминания о событиях", NotificationManager.IMPORTANCE_HIGH),
         )
     }
 
@@ -523,9 +664,13 @@ class IntelTracker(
         const val KEY_KEYWORD_EXCL = "intel_keyword_excl"
         const val KEY_KEYWORD_CHATS = "intel_keyword_chats"
         const val KEY_TYPING_ALERT_USERS = "intel_typing_alerts"
+        const val KEY_STORY_AUTO = "intel_story_auto"
+        const val KEY_CALENDAR_REMIND = "intel_calendar_remind"
         const val CHANNEL_INTEL = "intel_alerts"
         const val CHANNEL_KEYWORD = "keyword_alerts"
         const val CHANNEL_TYPING = "typing_alerts"
+        const val CHANNEL_STORY = "story_alerts"
+        const val CHANNEL_CALENDAR = "calendar_alerts"
         const val TYPING_DEBOUNCE_SEC = 8L
     }
 }

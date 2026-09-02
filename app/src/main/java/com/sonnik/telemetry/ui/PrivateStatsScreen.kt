@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,9 +30,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
 import com.sonnik.telemetry.data.ChatKind
 import com.sonnik.telemetry.data.ChatSummary
+import com.sonnik.telemetry.data.ScanCache
 import com.sonnik.telemetry.stats.StatsEngine
+import kotlinx.coroutines.launch
 
 private data class PrivateCount(val chat: ChatSummary, val total: Int?)
 
@@ -51,29 +56,60 @@ private data class PrivateCount(val chat: ChatSummary, val total: Int?)
 @Composable
 fun PrivateStatsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     val app = TelemetryApp.instance
+    val scope = rememberCoroutineScope()
     val engine = remember { StatsEngine(app.telegram.client) }
 
     val counts = remember { mutableStateListOf<PrivateCount>() }
     var totalChats by remember { mutableStateOf<Int?>(null) }
     var processed by remember { mutableStateOf(0) }
-    var running by remember { mutableStateOf(true) }
+    var running by remember { mutableStateOf(false) }
     var cancelled by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var cacheTime by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(Unit) {
-        val chats = app.chats.loadAllChats().getOrElse {
-            error = it.message
+    fun scan() {
+        if (running) return
+        running = true
+        cancelled = false
+        error = null
+        counts.clear()
+        processed = 0
+        totalChats = null
+        scope.launch {
+            val chats = app.chats.loadAllChats().getOrElse {
+                error = it.message
+                running = false
+                return@launch
+            }
+            val privates = chats.filter { it.kind == ChatKind.PRIVATE }
+            totalChats = privates.size
+            for (chat in privates) {
+                if (cancelled) break
+                counts += PrivateCount(chat, engine.totalMessages(chat.id))
+                processed++
+            }
+            ScanCache.privateStats = ScanCache.PrivateStatsCache(
+                counts.map { it.chat to it.total },
+                partial = cancelled,
+            )
+            ScanCache.privateStatsTime = System.currentTimeMillis()
+            cacheTime = ScanCache.privateStatsTime
             running = false
-            return@LaunchedEffect
         }
-        val privates = chats.filter { it.kind == ChatKind.PRIVATE }
-        totalChats = privates.size
-        for (chat in privates) {
-            if (cancelled) break
-            counts += PrivateCount(chat, engine.totalMessages(chat.id))
-            processed++
+    }
+
+    // Show the last scan immediately; only re-scan when the cache is empty.
+    LaunchedEffect(Unit) {
+        if (counts.isEmpty() && !running) {
+            val cached = ScanCache.privateStats
+            if (cached != null) {
+                counts.addAll(cached.counts.map { PrivateCount(it.first, it.second) })
+                cancelled = cached.partial
+                cacheTime = ScanCache.privateStatsTime
+            } else {
+                scan()
+            }
         }
-        running = false
     }
 
     Scaffold(
@@ -94,6 +130,9 @@ fun PrivateStatsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                             "Тап по строке открывает статистику чата.",
                         ),
                     )
+                    IconButton(onClick = { scan() }, enabled = !running) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Обновить")
+                    }
                 },
             )
         },
@@ -122,6 +161,16 @@ fun PrivateStatsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
             }
 
             if (counts.isNotEmpty()) {
+                if (!running) {
+                    val age = ScanCache.ageLabel(cacheTime)
+                    if (age.isNotEmpty()) {
+                        Text(
+                            "Обновлено: $age",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 PrivateSummary(counts.toList(), partial = cancelled, onOpenChat = onOpenChat)
             }
         }
