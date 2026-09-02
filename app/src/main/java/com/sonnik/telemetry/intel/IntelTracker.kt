@@ -45,7 +45,9 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -104,7 +106,22 @@ class IntelTracker(
     private var keywordCache: List<String> = emptyList()
 
     @Volatile
+    private var exclusionCache: List<String> = emptyList()
+
+    @Volatile
+    private var chatFilterCache: Set<Long> = emptySet()
+
+    @Volatile
+    private var wholeWordCache: Boolean = false
+
+    @Volatile
+    private var typingAlertCache: Set<Long> = emptySet()
+
+    @Volatile
     private var myId: Long = 0L
+
+    private val _liveTyping = MutableSharedFlow<TypingEvent>(extraBufferCapacity = 64)
+    val liveTyping: SharedFlow<TypingEvent> = _liveTyping
 
     /** Debounces repeated action updates (same sender+chat+action within a few seconds). */
     private val typingDedup = HashMap<String, Long>()
@@ -129,10 +146,65 @@ class IntelTracker(
         keywordCache = keywords()
     }
 
+    fun wholeWordMode(): Boolean = prefs.getBoolean(KEY_KEYWORD_WHOLE_WORD, false)
+
+    fun setWholeWordMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_KEYWORD_WHOLE_WORD, enabled).apply()
+        wholeWordCache = enabled
+    }
+
+    fun exclusions(): List<String> =
+        prefs.getStringSet(KEY_KEYWORD_EXCL, emptySet())!!.toList().sortedBy { it.lowercase() }
+
+    fun addExclusion(word: String) {
+        val w = word.trim()
+        if (w.isEmpty()) return
+        val set = prefs.getStringSet(KEY_KEYWORD_EXCL, emptySet())!!.toMutableSet()
+        set.add(w)
+        prefs.edit().putStringSet(KEY_KEYWORD_EXCL, set).apply()
+        exclusionCache = exclusions()
+    }
+
+    fun removeExclusion(word: String) {
+        val set = prefs.getStringSet(KEY_KEYWORD_EXCL, emptySet())!!.toMutableSet()
+        set.remove(word)
+        prefs.edit().putStringSet(KEY_KEYWORD_EXCL, set).apply()
+        exclusionCache = exclusions()
+    }
+
+    fun keywordChatFilter(): Set<Long> =
+        prefs.getStringSet(KEY_KEYWORD_CHATS, emptySet())!!.mapNotNull { it.toLongOrNull() }.toSet()
+
+    fun setKeywordChatFilter(chatIds: Set<Long>) {
+        prefs.edit().putStringSet(KEY_KEYWORD_CHATS, chatIds.map { it.toString() }.toSet()).apply()
+        chatFilterCache = chatIds
+    }
+
+    fun typingAlertUsers(): Set<Long> =
+        prefs.getStringSet(KEY_TYPING_ALERT_USERS, emptySet())!!.mapNotNull { it.toLongOrNull() }.toSet()
+
+    fun addTypingAlertUser(userId: Long) {
+        val set = prefs.getStringSet(KEY_TYPING_ALERT_USERS, emptySet())!!.toMutableSet()
+        set.add(userId.toString())
+        prefs.edit().putStringSet(KEY_TYPING_ALERT_USERS, set).apply()
+        typingAlertCache = typingAlertUsers()
+    }
+
+    fun removeTypingAlertUser(userId: Long) {
+        val set = prefs.getStringSet(KEY_TYPING_ALERT_USERS, emptySet())!!.toMutableSet()
+        set.remove(userId.toString())
+        prefs.edit().putStringSet(KEY_TYPING_ALERT_USERS, set).apply()
+        typingAlertCache = typingAlertUsers()
+    }
+
     fun start() {
         if (started) return
         started = true
         keywordCache = keywords()
+        exclusionCache = exclusions()
+        chatFilterCache = keywordChatFilter()
+        wholeWordCache = wholeWordMode()
+        typingAlertCache = typingAlertUsers()
         ensureChannel()
 
         scope.launch {
@@ -141,15 +213,19 @@ class IntelTracker(
         scope.launch {
             telegram.client.chatActionUpdates.collect { update ->
                 val sender = (update.senderId as? MessageSenderUser)?.userId ?: return@collect
-                if (sender == myId) return@collect // ignore my own actions
+                if (sender == myId) return@collect
                 val label = actionLabel(update.action) ?: return@collect
                 val now = System.currentTimeMillis() / 1000
+                _liveTyping.tryEmit(TypingEvent(update.chatId, sender, label, now))
                 val key = "${update.chatId}:$sender:$label"
                 val last = typingDedup[key] ?: 0L
                 if (now - last < TYPING_DEBOUNCE_SEC) return@collect
                 typingDedup[key] = now
                 store.recordTyping(TypingEvent(update.chatId, sender, label, now))
                 bump()
+                if (sender in typingAlertCache) {
+                    notifyTyping(sender, update.chatId, label)
+                }
             }
         }
         scope.launch {
@@ -262,9 +338,21 @@ class IntelTracker(
     /** Checks a new message against tracked keywords; records and notifies on a match. */
     private suspend fun matchKeywords(m: Message) {
         if (keywordCache.isEmpty()) return
+        if (chatFilterCache.isNotEmpty() && m.chatId !in chatFilterCache) return
         val text = rawText(m.content)
         if (text.isBlank()) return
-        val hit = keywordCache.firstOrNull { text.contains(it, ignoreCase = true) } ?: return
+        if (exclusionCache.any { text.contains(it, ignoreCase = true) }) return
+        val hit = keywordCache.firstOrNull { kw ->
+            if (kw.startsWith("/") && kw.endsWith("/") && kw.length > 2) {
+                runCatching { Regex(kw.substring(1, kw.length - 1), RegexOption.IGNORE_CASE).containsMatchIn(text) }
+                    .getOrDefault(false)
+            } else if (wholeWordCache) {
+                runCatching { Regex("\\b${Regex.escape(kw)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) }
+                    .getOrDefault(false)
+            } else {
+                text.contains(kw, ignoreCase = true)
+            }
+        } ?: return
         val snippet = messageBody(m.content)
         store.recordKeywordHit(
             KeywordHit(
@@ -391,24 +479,24 @@ class IntelTracker(
         }
     }
 
-    /** Human-readable label for a chat action, or null for ones we don't record. */
-    private fun actionLabel(a: ChatAction): String? = when (a) {
-        is ChatActionTyping -> "печатает"
-        is ChatActionRecordingVoiceNote -> "записывает голосовое"
-        is ChatActionRecordingVideoNote -> "записывает кружок"
-        is ChatActionRecordingVideo -> "записывает видео"
-        is ChatActionUploadingPhoto -> "отправляет фото"
-        is ChatActionUploadingVideo -> "отправляет видео"
-        is ChatActionUploadingVoiceNote -> "отправляет голосовое"
-        is ChatActionUploadingVideoNote -> "отправляет кружок"
-        is ChatActionUploadingDocument -> "отправляет файл"
-        is ChatActionChoosingSticker -> "выбирает стикер"
-        is ChatActionChoosingLocation -> "выбирает геопозицию"
-        is ChatActionChoosingContact -> "выбирает контакт"
-        is ChatActionStartPlayingGame -> "играет"
-        is ChatActionWatchingAnimations -> "смотрит анимации"
-        is ChatActionCancel -> null
-        else -> null
+    private suspend fun notifyTyping(senderId: Long, chatId: Long, action: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+        val chats = TelemetryApp.instance.chats
+        val sender = runCatching {
+            chats.senderName(MessageSenderUser(senderId))
+        }.getOrNull() ?: "Контакт"
+        val chatName = runCatching { chats.getChat(chatId)?.title }.getOrNull()
+        val notification = NotificationCompat.Builder(context, CHANNEL_TYPING)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("⌨ $sender $action")
+            .setContentText(chatName ?: "")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(nextNotificationId(), notification) }
     }
 
     private fun ensureChannel() {
@@ -419,6 +507,9 @@ class IntelTracker(
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_KEYWORD, "Ключевые слова", NotificationManager.IMPORTANCE_HIGH),
         )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_TYPING, "Печатает — уведомления", NotificationManager.IMPORTANCE_DEFAULT),
+        )
     }
 
     private fun nextNotificationId(): Int = (System.currentTimeMillis() % 100000).toInt() + 200000
@@ -428,10 +519,34 @@ class IntelTracker(
         const val KEY_CAPTURE = "intel_capture"
         const val KEY_CAPTURE_DAYS = "intel_capture_days"
         const val KEY_KEYWORDS = "intel_keywords"
+        const val KEY_KEYWORD_WHOLE_WORD = "intel_keyword_whole"
+        const val KEY_KEYWORD_EXCL = "intel_keyword_excl"
+        const val KEY_KEYWORD_CHATS = "intel_keyword_chats"
+        const val KEY_TYPING_ALERT_USERS = "intel_typing_alerts"
         const val CHANNEL_INTEL = "intel_alerts"
         const val CHANNEL_KEYWORD = "keyword_alerts"
+        const val CHANNEL_TYPING = "typing_alerts"
         const val TYPING_DEBOUNCE_SEC = 8L
     }
+}
+
+fun actionLabel(a: ChatAction): String? = when (a) {
+    is ChatActionTyping -> "печатает"
+    is ChatActionRecordingVoiceNote -> "записывает голосовое"
+    is ChatActionRecordingVideoNote -> "записывает кружок"
+    is ChatActionRecordingVideo -> "записывает видео"
+    is ChatActionUploadingPhoto -> "отправляет фото"
+    is ChatActionUploadingVideo -> "отправляет видео"
+    is ChatActionUploadingVoiceNote -> "отправляет голосовое"
+    is ChatActionUploadingVideoNote -> "отправляет кружок"
+    is ChatActionUploadingDocument -> "отправляет файл"
+    is ChatActionChoosingSticker -> "выбирает стикер"
+    is ChatActionChoosingLocation -> "выбирает геопозицию"
+    is ChatActionChoosingContact -> "выбирает контакт"
+    is ChatActionStartPlayingGame -> "играет"
+    is ChatActionWatchingAnimations -> "смотрит анимации"
+    is ChatActionCancel -> null
+    else -> null
 }
 
 /** Short human-readable one-line summary of a message's content. */

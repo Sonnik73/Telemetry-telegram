@@ -211,7 +211,10 @@ private fun TelemetryNavHost() {
             StoryFeedScreen(onBack = { navController.popBackStack() })
         }
         composable("graph") {
-            ContactGraphScreen(onBack = { navController.popBackStack() })
+            ContactGraphScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDossier = { userId -> navController.navigate("dossier/$userId") },
+            )
         }
         composable("typinglog") {
             TypingLogScreen(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -20,15 +21,20 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,20 +42,25 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sonnik.telemetry.TelemetryApp
+import com.sonnik.telemetry.data.ChatSummary
 import com.sonnik.telemetry.intel.KeywordHit
 import dev.g000sha256.tdl.dto.MessageSenderChat
 import dev.g000sha256.tdl.dto.MessageSenderUser
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     val app = TelemetryApp.instance
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     val changed by app.intel.changed.collectAsState()
 
     var words by remember { mutableStateOf(app.intel.keywords()) }
@@ -57,6 +68,13 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     var hits by remember { mutableStateOf<List<KeywordHit>>(emptyList()) }
     val chatNames = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     val senderNames = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+
+    var wholeWord by remember { mutableStateOf(app.intel.wholeWordMode()) }
+    var exclusions by remember { mutableStateOf(app.intel.exclusions()) }
+    var exclInput by remember { mutableStateOf("") }
+
+    var chatFilter by remember { mutableStateOf(app.intel.keywordChatFilter()) }
+    var showChatPicker by remember { mutableStateOf(false) }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -98,6 +116,14 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
         ensureBackground()
     }
 
+    fun addExcl() {
+        val w = exclInput.trim()
+        if (w.isEmpty()) return
+        app.intel.addExclusion(w)
+        exclusions = app.intel.exclusions()
+        exclInput = ""
+    }
+
     LaunchedEffect(changed) {
         val list = app.intel.store.keywordHits(limit = 500)
         hits = list
@@ -117,6 +143,18 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
         }
     }
 
+    if (showChatPicker) {
+        ChatFilterDialog(
+            selected = chatFilter,
+            onDismiss = { showChatPicker = false },
+            onConfirm = { ids ->
+                chatFilter = ids
+                app.intel.setKeywordChatFilter(ids)
+                showChatPicker = false
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -133,11 +171,10 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     InfoButton(
                         "Отслеживание ключевых слов",
                         listOf(
-                            "Фоновый сборщик проверяет новые сообщения во всех чатах и каналах, где вы состоите.",
-                            "При совпадении с ключевым словом приходит пуш-уведомление и запись попадает в журнал ниже.",
-                            "Совпадение — по вхождению без учёта регистра, в тексте и подписях к медиа.",
-                            "Работает, пока запущен трекер (фоновый сервис).",
-                            "Тап по записи открывает нужный чат.",
+                            "Слово в формате /regex/ воспринимается как регулярное выражение.",
+                            "«Целое слово» — срабатывание только на полное совпадение (не на часть слова).",
+                            "«Исключения» — если слово-исключение есть в сообщении, совпадение подавляется.",
+                            "«Фильтр чатов» — ограничить проверку выбранными чатами.",
                         ),
                     )
                 },
@@ -149,7 +186,7 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
-                    label = { Text("Новое слово или фраза") },
+                    label = { Text("Слово, фраза или /regex/") },
                     singleLine = true,
                     trailingIcon = {
                         IconButton(onClick = { addWord() }, enabled = input.isNotBlank()) {
@@ -158,6 +195,34 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = wholeWord,
+                        onClick = {
+                            wholeWord = !wholeWord
+                            app.intel.setWholeWordMode(wholeWord)
+                        },
+                        label = { Text("целое слово") },
+                    )
+                    FilterChip(
+                        selected = chatFilter.isNotEmpty(),
+                        onClick = { showChatPicker = true },
+                        label = {
+                            Text(
+                                if (chatFilter.isEmpty()) "все чаты"
+                                else "чатов: ${chatFilter.size}",
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.FilterList, contentDescription = null)
+                        },
+                    )
+                }
+
                 if (words.isEmpty()) {
                     Text(
                         "Пока нет слов. Добавьте слово — и приложение будет присылать уведомление, " +
@@ -168,8 +233,40 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                 } else {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         words.forEach { w ->
+                            val isRegex = w.startsWith("/") && w.endsWith("/") && w.length > 2
                             AssistChip(
                                 onClick = { app.intel.removeKeyword(w); words = app.intel.keywords() },
+                                label = {
+                                    Text(
+                                        if (isRegex) "⟨RE⟩ ${w.substring(1, w.length - 1)}" else w,
+                                    )
+                                },
+                                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Удалить") },
+                            )
+                        }
+                    }
+                }
+
+                if (exclusions.isNotEmpty() || exclInput.isNotEmpty()) {
+                    Text("Исключения", style = MaterialTheme.typography.labelMedium)
+                }
+                OutlinedTextField(
+                    value = exclInput,
+                    onValueChange = { exclInput = it },
+                    label = { Text("Слово-исключение") },
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = { addExcl() }, enabled = exclInput.isNotBlank()) {
+                            Icon(Icons.Default.Add, contentDescription = "Добавить")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (exclusions.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        exclusions.forEach { w ->
+                            AssistChip(
+                                onClick = { app.intel.removeExclusion(w); exclusions = app.intel.exclusions() },
                                 label = { Text(w) },
                                 trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Удалить") },
                             )
@@ -211,4 +308,73 @@ fun KeywordsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun ChatFilterDialog(
+    selected: Set<Long>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Long>) -> Unit,
+) {
+    val app = TelemetryApp.instance
+    val scope = rememberCoroutineScope()
+    var chats by remember { mutableStateOf<List<ChatSummary>?>(null) }
+    var query by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf(selected) }
+
+    LaunchedEffect(Unit) {
+        scope.launch {
+            app.chats.loadAllChats().onSuccess { chats = it }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Отслеживать в чатах") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Поиск") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                val list = chats
+                if (list == null) {
+                    Text("Загрузка…", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    if (picked.isNotEmpty()) {
+                        TextButton(onClick = { picked = emptySet() }) { Text("Сбросить (все чаты)") }
+                    }
+                    val q = query.trim().lowercase()
+                    val visible = if (q.isEmpty()) list.take(50) else list.filter { it.title.lowercase().contains(q) }.take(50)
+                    LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                        items(visible, key = { it.id }) { chat ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    picked = if (chat.id in picked) picked - chat.id else picked + chat.id
+                                }.padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = chat.id in picked,
+                                    onCheckedChange = {
+                                        picked = if (it) picked + chat.id else picked - chat.id
+                                    },
+                                )
+                                Text(chat.title, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(picked) }) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
 }
