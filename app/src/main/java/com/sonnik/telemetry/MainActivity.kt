@@ -67,6 +67,21 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // When the app lock is on, mark the window secure so its contents are hidden
+        // from screenshots and the recent-apps preview (which would otherwise bypass
+        // the lock). Applied while foreground so the recents thumbnail is protected.
+        if (TelemetryApp.instance.lock.isEnabled()) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            )
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         // Re-lock when the app leaves the foreground, so returning requires unlock.

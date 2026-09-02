@@ -235,11 +235,16 @@ class TelegramClient(context: Context) {
         val filesDirectory = File(appContext.filesDir, "tdlib-files")
         databaseDirectory.mkdirs()
         filesDirectory.mkdirs()
+        // Encrypt the TDLib database at rest with a key wrapped by the AndroidKeyStore.
+        // Databases created before this change are unencrypted, so open them with an
+        // empty key and then re-key in place; the flag records that migration.
+        val dbKey = com.sonnik.telemetry.security.DbKey.get(appContext)
+        val alreadyEncrypted = prefs.getBoolean(KEY_DB_ENCRYPTED, false)
         val result = client.setTdlibParameters(
             useTestDc = false,
             databaseDirectory = databaseDirectory.absolutePath,
             filesDirectory = filesDirectory.absolutePath,
-            databaseEncryptionKey = ByteArray(0),
+            databaseEncryptionKey = if (alreadyEncrypted) dbKey else ByteArray(0),
             useFileDatabase = true,
             useChatInfoDatabase = true,
             useMessageDatabase = true,
@@ -256,11 +261,19 @@ class TelegramClient(context: Context) {
             parametersSent = false
             _lastError.value = "${result.code}: ${result.message}"
             _authState.value = AuthUiState.NeedApiCredentials
+            return
+        }
+        if (!alreadyEncrypted) {
+            // Encrypt the (previously plaintext or brand-new) database in place.
+            if (client.setDatabaseEncryptionKey(dbKey) is TdlResult.Success) {
+                prefs.edit().putBoolean(KEY_DB_ENCRYPTED, true).apply()
+            }
         }
     }
 
     private companion object {
         const val KEY_API_ID = "api_id"
         const val KEY_API_HASH = "api_hash"
+        const val KEY_DB_ENCRYPTED = "db_encrypted"
     }
 }
